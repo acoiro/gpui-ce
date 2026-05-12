@@ -40,6 +40,7 @@ pub(crate) struct WebWindowMutableState {
     pub(crate) mouse_position: Point<Pixels>,
     pub(crate) modifiers: Modifiers,
     pub(crate) capslock: Capslock,
+    pub(crate) background_appearance: WindowBackgroundAppearance,
 }
 
 pub(crate) struct WebWindowInner {
@@ -178,6 +179,7 @@ impl WebWindow {
             mouse_position: Point::default(),
             modifiers: Modifiers::default(),
             capslock: Capslock::default(),
+            background_appearance: WindowBackgroundAppearance::Opaque,
         };
 
         let is_mac = is_mac_platform(&browser_window);
@@ -583,7 +585,7 @@ impl PlatformWindow for WebWindow {
     }
 
     fn background_appearance(&self) -> WindowBackgroundAppearance {
-        WindowBackgroundAppearance::Opaque
+        self.inner.state.borrow().background_appearance
     }
 
     fn set_title(&mut self, title: &str) {
@@ -593,7 +595,13 @@ impl PlatformWindow for WebWindow {
         }
     }
 
-    fn set_background_appearance(&self, _background: WindowBackgroundAppearance) {}
+    fn set_background_appearance(&self, background: WindowBackgroundAppearance) {
+        let mut state = self.inner.state.borrow_mut();
+        state.background_appearance = background;
+        state
+            .renderer
+            .update_transparency(background != WindowBackgroundAppearance::Opaque);
+    }
 
     fn minimize(&self) {
         log::warn!("WebWindow::minimize is not supported in the browser");

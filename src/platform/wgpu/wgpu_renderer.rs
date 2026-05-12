@@ -284,6 +284,9 @@ impl WgpuRenderer {
                     })
             };
 
+        #[cfg(target_family = "wasm")]
+        let transparent_alpha_mode = wgpu::CompositeAlphaMode::PreMultiplied;
+        #[cfg(not(target_family = "wasm"))]
         let transparent_alpha_mode = pick_alpha_mode(&[
             wgpu::CompositeAlphaMode::PreMultiplied,
             wgpu::CompositeAlphaMode::Inherit,
