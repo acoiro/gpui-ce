@@ -1,8 +1,8 @@
-use crate::dispatcher::WebDispatcher;
-use crate::display::WebDisplay;
-use crate::keyboard::WebKeyboardLayout;
 use crate::platform::wgpu::WgpuContext;
-use crate::window::WebWindow;
+use super::dispatcher::WebDispatcher;
+use super::display::WebDisplay;
+use super::keyboard::WebKeyboardLayout;
+use super::window::WebWindow;
 use anyhow::Result;
 use futures::channel::oneshot;
 use gpui::{

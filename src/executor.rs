@@ -350,7 +350,14 @@ impl BackgroundExecutor {
         if let Some(test) = self.dispatcher.as_test() {
             return test.num_cpus_override().unwrap_or(4);
         }
+        #[cfg(target_family = "wasm")]
+        {
+            1
+        }
+        #[cfg(not(target_family = "wasm"))]
+        {
         num_cpus::get()
+        }
     }
 
     /// Override the number of CPUs reported by this executor in tests.

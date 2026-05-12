@@ -9,7 +9,7 @@ use gpui::{
 use smallvec::smallvec;
 use wasm_bindgen::prelude::*;
 
-use crate::window::WebWindowInner;
+use super::window::WebWindowInner;
 
 pub struct WebEventListeners {
     #[allow(dead_code)]

@@ -23,6 +23,11 @@ fn shared_memory_supported() -> bool {
     has_shared_array_buffer && has_atomics && is_shared_buffer
 }
 
+#[cfg(not(feature = "multithreaded"))]
+fn shared_memory_supported() -> bool {
+    false
+}
+
 enum MainThreadItem {
     Runnable(RunnableVariant),
     Delayed {

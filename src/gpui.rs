@@ -101,7 +101,9 @@ pub use inspector::*;
 pub use interactive::*;
 use key_dispatch::*;
 pub use keymap::*;
-pub use local_util::{FutureExt, Timeout, command};
+#[cfg(not(target_family = "wasm"))]
+pub use local_util::command;
+pub use local_util::{FutureExt, Timeout};
 pub use path_builder::*;
 pub use platform::*;
 pub use profiler::*;

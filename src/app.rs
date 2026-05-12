@@ -188,9 +188,13 @@ impl Application {
     {
         let this = self.0.clone();
         let platform = self.0.borrow().platform.clone();
+        #[cfg(target_family = "wasm")]
+        let keep_alive = this.clone();
         platform.run(Box::new(move || {
             let cx = &mut *this.borrow_mut();
             on_finish_launching(cx);
+            #[cfg(target_family = "wasm")]
+            std::mem::forget(keep_alive);
         }));
     }
 

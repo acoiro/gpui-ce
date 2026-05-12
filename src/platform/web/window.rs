@@ -1,5 +1,5 @@
-use crate::display::WebDisplay;
-use crate::events::{ClickState, WebEventListeners, is_mac_platform};
+use super::display::WebDisplay;
+use super::events::{ClickState, WebEventListeners, is_mac_platform};
 use std::sync::Arc;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
 
@@ -64,7 +64,6 @@ pub struct WebWindow {
     display: Rc<dyn PlatformDisplay>,
     #[allow(dead_code)]
     handle: AnyWindowHandle,
-    _raf_closure: Closure<dyn FnMut()>,
     _resize_observer: Option<web_sys::ResizeObserver>,
     _resize_observer_closure: Closure<dyn FnMut(js_sys::Array)>,
     _event_listeners: WebEventListeners,
@@ -185,8 +184,7 @@ impl WebWindow {
             pending_physical_size: Cell::new(None),
         });
 
-        let raf_closure = inner.create_raf_closure();
-        inner.schedule_raf(&raf_closure);
+        inner.schedule_raf();
 
         let resize_observer_closure = Self::create_resize_observer_closure(Rc::clone(&inner));
         let resize_observer =
@@ -203,7 +201,6 @@ impl WebWindow {
             inner,
             display,
             handle,
-            _raf_closure: raf_closure,
             _resize_observer: resize_observer,
             _resize_observer_closure: resize_observer_closure,
             _event_listeners: event_listeners,
@@ -299,12 +296,9 @@ impl WebWindow {
 }
 
 impl WebWindowInner {
-    fn create_raf_closure(self: &Rc<Self>) -> Closure<dyn FnMut()> {
-        let raf_handle: Rc<RefCell<Option<js_sys::Function>>> = Rc::new(RefCell::new(None));
-        let raf_handle_inner = Rc::clone(&raf_handle);
-
+    fn schedule_raf(self: &Rc<Self>) {
         let this = Rc::clone(self);
-        let closure = Closure::new(move || {
+        let callback = Closure::once_into_js(move || {
             {
                 let mut callbacks = this.callbacks.borrow_mut();
                 if let Some(ref mut callback) = callbacks.request_frame {
@@ -316,21 +310,10 @@ impl WebWindowInner {
             }
 
             // Re-schedule for the next frame
-            if let Some(ref func) = *raf_handle_inner.borrow() {
-                this.browser_window.request_animation_frame(func).ok();
-            }
+            this.schedule_raf();
         });
-
-        let js_func: js_sys::Function =
-            closure.as_ref().unchecked_ref::<js_sys::Function>().clone();
-        *raf_handle.borrow_mut() = Some(js_func);
-
-        closure
-    }
-
-    fn schedule_raf(&self, closure: &Closure<dyn FnMut()>) {
         self.browser_window
-            .request_animation_frame(closure.as_ref().unchecked_ref())
+            .request_animation_frame(callback.unchecked_ref())
             .ok();
     }
 

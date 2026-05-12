@@ -8,7 +8,7 @@ use wasm_bindgen::JsCast as _;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
-extern "C" {
+unsafe extern "C" {
     #[wasm_bindgen(catch, js_name = "fetch")]
     fn global_fetch(input: &web_sys::Request) -> Result<js_sys::Promise, JsValue>;
 }
@@ -80,6 +80,10 @@ impl<F: Future> Future for AssertSend<F> {
 }
 
 impl HttpClient for FetchHttpClient {
+    fn type_name(&self) -> &'static str {
+        "FetchHttpClient"
+    }
+
     fn user_agent(&self) -> Option<&http_client::http::header::HeaderValue> {
         self.user_agent.as_ref()
     }

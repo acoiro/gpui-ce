@@ -111,6 +111,7 @@ impl<T: Future> Future for WithTimeout<T> {
 }
 
 /// Utilities for creating and managing shell commands.
+#[cfg(not(target_family = "wasm"))]
 pub mod command {
     use smol::process::Command as SmolCommand;
     use std::ffi::OsStr;

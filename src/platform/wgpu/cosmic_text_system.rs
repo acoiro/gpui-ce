@@ -184,7 +184,7 @@ impl PlatformTextSystem for CosmicTextSystem {
         _font_id: FontId,
         _font_size: Pixels,
     ) -> TextRenderingMode {
-        TextRenderingMode::Subpixel
+        TextRenderingMode::Grayscale
     }
 }
 
@@ -323,7 +323,7 @@ impl CosmicTextSystemState {
             .swash_scale_context
             .builder(font_ref)
             .size(pixel_size * params.scale_factor)
-            .hint(true)
+            .hint(false)
             .build();
 
         let sources: &[Source] = if params.is_emoji {
