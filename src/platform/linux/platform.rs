@@ -23,10 +23,11 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::platform::linux::{LinuxDispatcher, PriorityQueueCalloopReceiver};
 use gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, RunnableVariant, Task, ThermalState, WindowAppearance, WindowParams,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, CustomCursor,
+    CustomCursorId, DisplayId, ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, Result, RunnableVariant, Task, ThermalState,
+    WindowAppearance, WindowParams,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use gpui::{Pixels, Point, px};
@@ -78,6 +79,9 @@ pub(crate) trait LinuxClient {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>>;
+    fn register_custom_cursor(&self, _cursor: CustomCursor) -> CustomCursorId {
+        CustomCursorId::next()
+    }
     fn set_cursor_style(&self, style: CursorStyle);
     fn open_uri(&self, uri: &str);
     fn reveal_path(&self, path: PathBuf);
@@ -525,6 +529,10 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         ))
     }
 
+    fn register_custom_cursor(&self, cursor: CustomCursor) -> CustomCursorId {
+        self.inner.register_custom_cursor(cursor)
+    }
+
     fn set_cursor_style(&self, style: CursorStyle) {
         self.inner.set_cursor_style(style)
     }
@@ -771,6 +779,7 @@ pub(super) fn cursor_style_to_icon_names(style: CursorStyle) -> &'static [&'stat
         CursorStyle::DragLink => &["alias"],
         CursorStyle::DragCopy => &["copy"],
         CursorStyle::ContextualMenu => &["context-menu"],
+        CursorStyle::Custom(_) => &[DEFAULT_CURSOR_ICON_NAME],
         CursorStyle::None => {
             #[cfg(debug_assertions)]
             panic!("CursorStyle::None should be handled separately in the client");

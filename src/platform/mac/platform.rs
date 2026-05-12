@@ -13,7 +13,8 @@ use cocoa::{
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
-        NSArray, NSAutoreleasePool, NSBundle, NSInteger, NSProcessInfo, NSString, NSUInteger, NSURL,
+        NSArray, NSAutoreleasePool, NSBundle, NSInteger, NSPoint, NSProcessInfo, NSSize, NSString,
+        NSUInteger, NSURL,
     },
 };
 use core_foundation::{
@@ -28,10 +29,11 @@ use ctor::ctor;
 use dispatch2::DispatchQueue;
 use futures::channel::oneshot;
 use gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
-    KeyContext, Keymap, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, SystemMenuType, Task, ThermalState, WindowAppearance, WindowParams,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, CustomCursor,
+    CustomCursorId, ForegroundExecutor, KeyContext, Keymap, Menu, MenuItem, OsMenu, OwnedMenu,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, Result, SystemMenuType, Task, ThermalState,
+    WindowAppearance, WindowParams,
 };
 use itertools::Itertools;
 use objc::{
@@ -46,6 +48,7 @@ use ptr::null_mut;
 use semver::Version;
 use std::{
     cell::Cell,
+    collections::HashMap,
     ffi::{CStr, OsStr, c_void},
     os::{raw::c_char, unix::ffi::OsStrExt},
     path::{Path, PathBuf},
@@ -176,6 +179,7 @@ pub(crate) struct MacPlatformState {
     finish_launching: Option<Box<dyn FnOnce()>>,
     dock_menu: Option<id>,
     menus: Option<Vec<OwnedMenu>>,
+    custom_cursors: HashMap<CustomCursorId, id>,
     keyboard_mapper: Rc<MacKeyboardMapper>,
 }
 
@@ -213,6 +217,7 @@ impl MacPlatform {
             on_keyboard_layout_change: None,
             on_thermal_state_change: None,
             menus: None,
+            custom_cursors: HashMap::new(),
             keyboard_mapper,
         }))
     }
@@ -448,6 +453,47 @@ impl MacPlatform {
             version.minorVersion,
             version.patchVersion,
         )
+    }
+}
+
+fn create_native_cursor(cursor: &CustomCursor) -> Option<id> {
+    unsafe {
+        let png = cursor.png_bytes().log_err()?;
+        let data: id = msg_send![
+            class!(NSData),
+            dataWithBytes:png.as_ptr()
+            length:png.len()
+        ];
+        if data == nil {
+            return None;
+        }
+
+        let image: id = msg_send![class!(NSImage), alloc];
+        let image: id = msg_send![image, initWithData:data];
+        if image == nil {
+            return None;
+        }
+        let logical_size = cursor.logical_size();
+        let image_size = NSSize::new(
+            f64::from(f32::from(logical_size.width)),
+            f64::from(f32::from(logical_size.height)),
+        );
+        let _: () = msg_send![image, setSize:image_size];
+
+        let hotspot = cursor.logical_hotspot();
+        let hotspot = NSPoint::new(
+            f64::from(f32::from(hotspot.x)),
+            f64::from(f32::from(hotspot.y)),
+        );
+        let native_cursor: id = msg_send![class!(NSCursor), alloc];
+        let native_cursor: id = msg_send![native_cursor, initWithImage:image hotSpot:hotspot];
+        let _: () = msg_send![image, release];
+
+        if native_cursor == nil {
+            None
+        } else {
+            Some(native_cursor)
+        }
     }
 }
 
@@ -974,6 +1020,19 @@ impl Platform for MacPlatform {
         }
     }
 
+    fn register_custom_cursor(&self, cursor: CustomCursor) -> CustomCursorId {
+        let cursor_id = CustomCursorId::next();
+
+        if let Some(native_cursor) = create_native_cursor(&cursor) {
+            self.0
+                .lock()
+                .custom_cursors
+                .insert(cursor_id, native_cursor);
+        }
+
+        cursor_id
+    }
+
     /// Match cursor style to one of the styles available
     /// in macOS's [NSCursor](https://developer.apple.com/documentation/appkit/nscursor).
     fn set_cursor_style(&self, style: CursorStyle) {
@@ -1017,6 +1076,13 @@ impl Platform for MacPlatform {
                 CursorStyle::DragLink => msg_send![class!(NSCursor), dragLinkCursor],
                 CursorStyle::DragCopy => msg_send![class!(NSCursor), dragCopyCursor],
                 CursorStyle::ContextualMenu => msg_send![class!(NSCursor), contextualMenuCursor],
+                CursorStyle::Custom(cursor_id) => self
+                    .0
+                    .lock()
+                    .custom_cursors
+                    .get(&cursor_id)
+                    .copied()
+                    .unwrap_or_else(|| msg_send![class!(NSCursor), arrowCursor]),
                 CursorStyle::None => unreachable!(),
             };
 

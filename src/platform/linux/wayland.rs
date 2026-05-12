@@ -37,6 +37,7 @@ pub(super) fn to_shape(style: CursorStyle) -> Shape {
         CursorStyle::DragLink => Shape::Alias,
         CursorStyle::DragCopy => Shape::Copy,
         CursorStyle::ContextualMenu => Shape::ContextMenu,
+        CursorStyle::Custom(_) => Shape::Default,
         CursorStyle::None => {
             #[cfg(debug_assertions)]
             panic!("CursorStyle::None should be handled separately in the client");

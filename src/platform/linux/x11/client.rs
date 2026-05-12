@@ -62,10 +62,10 @@ use crate::platform::linux::{
 
 use crate::platform::wgpu::{CompositorGpuHint, GpuContext};
 use gpui::{
-    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay, PlatformInput,
-    PlatformKeyboardLayout, PlatformWindow, Point, RequestFrameOptions, ScrollDelta, Size,
-    TouchPhase, WindowParams, point, px,
+    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, CustomCursor, CustomCursorId, DisplayId,
+    FileDropEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels,
+    PlatformDisplay, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point,
+    RequestFrameOptions, ScrollDelta, Size, TouchPhase, WindowParams, point, px,
 };
 
 /// Value for DeviceId parameters which selects all devices.
@@ -212,6 +212,7 @@ pub struct X11ClientState {
     pub(crate) cursor_handle: cursor::Handle,
     pub(crate) cursor_styles: HashMap<xproto::Window, CursorStyle>,
     pub(crate) cursor_cache: HashMap<CursorStyle, Option<xproto::Cursor>>,
+    pub(crate) custom_cursors: HashMap<CustomCursorId, Option<xproto::Cursor>>,
 
     pointer_device_states: BTreeMap<xinput::DeviceId, PointerDeviceState>,
 
@@ -522,6 +523,7 @@ impl X11Client {
             cursor_handle,
             cursor_styles: HashMap::default(),
             cursor_cache: HashMap::default(),
+            custom_cursors: HashMap::default(),
 
             pointer_device_states,
 
@@ -1566,6 +1568,21 @@ impl LinuxClient for X11Client {
         Ok(Box::new(window))
     }
 
+    fn register_custom_cursor(&self, cursor: CustomCursor) -> CustomCursorId {
+        let cursor_id = CustomCursorId::next();
+        let mut state = self.0.borrow_mut();
+        let native_cursor =
+            create_native_custom_cursor(&state.xcb_connection, state.x_root_index, &cursor)
+                .map_err(|error| {
+                    log_cursor_icon_warning(
+                        error.context("X11: error while creating custom cursor"),
+                    )
+                })
+                .ok();
+        state.custom_cursors.insert(cursor_id, native_cursor);
+        cursor_id
+    }
+
     fn set_cursor_style(&self, style: CursorStyle) {
         let mut state = self.0.borrow_mut();
         let Some(focused_window) = state.mouse_focused_window else {
@@ -1905,6 +1922,16 @@ impl X11ClientState {
 
         let result;
         match style {
+            CursorStyle::Custom(cursor_id) => {
+                let cursor = self
+                    .custom_cursors
+                    .get(&cursor_id)
+                    .copied()
+                    .flatten()
+                    .or_else(|| self.get_cursor_icon(CursorStyle::Arrow));
+                self.cursor_cache.insert(style, cursor);
+                return cursor;
+            }
             CursorStyle::None => match create_invisible_cursor(&self.xcb_connection) {
                 Ok(loaded_cursor) => result = Ok(loaded_cursor),
                 Err(err) => result = Err(err.context("X11: error while creating invisible cursor")),
@@ -2344,6 +2371,98 @@ fn create_invisible_cursor(
 
     xcb_flush(connection);
     Ok(cursor)
+}
+
+fn create_native_custom_cursor(
+    connection: &XCBConnection,
+    root_index: usize,
+    cursor: &CustomCursor,
+) -> anyhow::Result<xproto::Cursor> {
+    let width = u16::try_from(i32::from(cursor.size.width))?;
+    let height = u16::try_from(i32::from(cursor.size.height))?;
+    let root = connection.setup().roots[root_index].root;
+    let pict_format = argb32_pict_format(connection)?;
+    let pixmap = connection.generate_id()?;
+    let gc = connection.generate_id()?;
+    let picture = connection.generate_id()?;
+    let native_cursor = connection.generate_id()?;
+
+    connection.create_pixmap(32, pixmap, root, width, height)?;
+    connection.create_gc(gc, pixmap, &xproto::CreateGCAux::default())?;
+    connection.put_image(
+        xproto::ImageFormat::Z_PIXMAP,
+        pixmap,
+        gc,
+        width,
+        height,
+        0,
+        0,
+        0,
+        32,
+        &x11_cursor_pixels(cursor, &pict_format.direct),
+    )?;
+    connection.free_gc(gc)?;
+    render::create_picture(
+        connection,
+        picture,
+        pixmap,
+        pict_format.id,
+        &render::CreatePictureAux::default(),
+    )?;
+    render::create_cursor(
+        connection,
+        native_cursor,
+        picture,
+        u16::try_from(i32::from(cursor.hotspot.x))?,
+        u16::try_from(i32::from(cursor.hotspot.y))?,
+    )?;
+    render::free_picture(connection, picture)?;
+    connection.free_pixmap(pixmap)?;
+
+    xcb_flush(connection);
+    Ok(native_cursor)
+}
+
+fn argb32_pict_format(connection: &XCBConnection) -> anyhow::Result<render::Pictforminfo> {
+    render::query_pict_formats(connection)?
+        .reply()?
+        .formats
+        .into_iter()
+        .find(|format| {
+            format.type_ == render::PictType::DIRECT
+                && format.depth == 32
+                && format.direct.alpha_mask == 0xff
+                && format.direct.red_mask == 0xff
+                && format.direct.green_mask == 0xff
+                && format.direct.blue_mask == 0xff
+        })
+        .context("could not find an ARGB32 XRender picture format")
+}
+
+fn x11_cursor_pixels(cursor: &CustomCursor, direct: &render::Directformat) -> Vec<u8> {
+    let mut output = Vec::with_capacity(cursor.pixels.len());
+
+    for pixel in cursor.pixels.chunks_exact(4) {
+        let alpha = pixel[3] as u32;
+        let red = premultiply(pixel[0], alpha);
+        let green = premultiply(pixel[1], alpha);
+        let blue = premultiply(pixel[2], alpha);
+        let value = (scale_to_mask(red, direct.red_mask) << direct.red_shift)
+            | (scale_to_mask(green, direct.green_mask) << direct.green_shift)
+            | (scale_to_mask(blue, direct.blue_mask) << direct.blue_shift)
+            | (scale_to_mask(alpha, direct.alpha_mask) << direct.alpha_shift);
+        output.extend_from_slice(&value.to_ne_bytes());
+    }
+
+    output
+}
+
+fn premultiply(component: u8, alpha: u32) -> u32 {
+    (component as u32 * alpha + 127) / 255
+}
+
+fn scale_to_mask(component: u32, mask: u16) -> u32 {
+    (component * mask as u32 + 127) / 255
 }
 
 enum DpiMode {

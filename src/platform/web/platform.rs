@@ -1,19 +1,20 @@
-use crate::platform::wgpu::WgpuContext;
 use super::dispatcher::WebDispatcher;
 use super::display::WebDisplay;
 use super::keyboard::WebKeyboardLayout;
 use super::window::WebWindow;
+use crate::platform::wgpu::WgpuContext;
 use anyhow::Result;
 use futures::channel::oneshot;
 use gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DummyKeyboardMapper,
-    ForegroundExecutor, Keymap, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Task,
-    ThermalState, WindowAppearance, WindowParams,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, CustomCursor,
+    CustomCursorId, DummyKeyboardMapper, ForegroundExecutor, Keymap, Menu, MenuItem,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, Task, ThermalState, WindowAppearance, WindowParams,
 };
 use std::{
     borrow::Cow,
     cell::RefCell,
+    collections::HashMap,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -38,6 +39,7 @@ pub struct WebPlatform {
     active_window: RefCell<Option<AnyWindowHandle>>,
     active_display: Rc<dyn PlatformDisplay>,
     callbacks: RefCell<WebPlatformCallbacks>,
+    custom_cursors: RefCell<HashMap<CustomCursorId, String>>,
     wgpu_context: Rc<RefCell<Option<WgpuContext>>>,
 }
 
@@ -85,9 +87,54 @@ impl WebPlatform {
             active_window: RefCell::new(None),
             active_display,
             callbacks: RefCell::new(WebPlatformCallbacks::default()),
+            custom_cursors: RefCell::new(HashMap::new()),
             wgpu_context: Rc::new(RefCell::new(None)),
         }
     }
+}
+
+fn custom_cursor_css(cursor: &CustomCursor) -> Result<String> {
+    let png = cursor.png_bytes()?;
+    let hotspot = cursor.logical_hotspot();
+    let url = format!("url(\"data:image/png;base64,{}\")", base64_encode(&png));
+    let image = if (cursor.scale_factor - 1.0).abs() < f32::EPSILON {
+        url
+    } else {
+        format!("image-set({url} {}x)", cursor.scale_factor)
+    };
+
+    Ok(format!(
+        "{image} {} {}, default",
+        f32::from(hotspot.x).round() as u32,
+        f32::from(hotspot.y).round() as u32
+    ))
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let a = chunk[0];
+        let b = *chunk.get(1).unwrap_or(&0);
+        let c = *chunk.get(2).unwrap_or(&0);
+        let value = ((a as u32) << 16) | ((b as u32) << 8) | c as u32;
+
+        output.push(TABLE[((value >> 18) & 0x3f) as usize] as char);
+        output.push(TABLE[((value >> 12) & 0x3f) as usize] as char);
+        if chunk.len() > 1 {
+            output.push(TABLE[((value >> 6) & 0x3f) as usize] as char);
+        } else {
+            output.push('=');
+        }
+        if chunk.len() > 2 {
+            output.push(TABLE[(value & 0x3f) as usize] as char);
+        } else {
+            output.push('=');
+        }
+    }
+
+    output
 }
 
 impl Platform for WebPlatform {
@@ -269,35 +316,58 @@ impl Platform for WebPlatform {
         ))
     }
 
+    fn register_custom_cursor(&self, cursor: CustomCursor) -> CustomCursorId {
+        let cursor_id = CustomCursorId::next();
+
+        match custom_cursor_css(&cursor) {
+            Ok(css_cursor) => {
+                self.custom_cursors
+                    .borrow_mut()
+                    .insert(cursor_id, css_cursor);
+            }
+            Err(error) => {
+                log::warn!("failed to register custom cursor: {error:#}");
+            }
+        }
+
+        cursor_id
+    }
+
     fn set_cursor_style(&self, style: CursorStyle) {
         let css_cursor = match style {
-            CursorStyle::Arrow => "default",
-            CursorStyle::IBeam => "text",
-            CursorStyle::Crosshair => "crosshair",
-            CursorStyle::ClosedHand => "grabbing",
-            CursorStyle::OpenHand => "grab",
-            CursorStyle::PointingHand => "pointer",
+            CursorStyle::Arrow => "default".into(),
+            CursorStyle::IBeam => "text".into(),
+            CursorStyle::Crosshair => "crosshair".into(),
+            CursorStyle::ClosedHand => "grabbing".into(),
+            CursorStyle::OpenHand => "grab".into(),
+            CursorStyle::PointingHand => "pointer".into(),
             CursorStyle::ResizeLeft | CursorStyle::ResizeRight | CursorStyle::ResizeLeftRight => {
-                "ew-resize"
+                "ew-resize".into()
             }
             CursorStyle::ResizeUp | CursorStyle::ResizeDown | CursorStyle::ResizeUpDown => {
-                "ns-resize"
+                "ns-resize".into()
             }
-            CursorStyle::ResizeUpLeftDownRight => "nesw-resize",
-            CursorStyle::ResizeUpRightDownLeft => "nwse-resize",
-            CursorStyle::ResizeColumn => "col-resize",
-            CursorStyle::ResizeRow => "row-resize",
-            CursorStyle::IBeamCursorForVerticalLayout => "vertical-text",
-            CursorStyle::OperationNotAllowed => "not-allowed",
-            CursorStyle::DragLink => "alias",
-            CursorStyle::DragCopy => "copy",
-            CursorStyle::ContextualMenu => "context-menu",
-            CursorStyle::None => "none",
+            CursorStyle::ResizeUpLeftDownRight => "nesw-resize".into(),
+            CursorStyle::ResizeUpRightDownLeft => "nwse-resize".into(),
+            CursorStyle::ResizeColumn => "col-resize".into(),
+            CursorStyle::ResizeRow => "row-resize".into(),
+            CursorStyle::IBeamCursorForVerticalLayout => "vertical-text".into(),
+            CursorStyle::OperationNotAllowed => "not-allowed".into(),
+            CursorStyle::DragLink => "alias".into(),
+            CursorStyle::DragCopy => "copy".into(),
+            CursorStyle::ContextualMenu => "context-menu".into(),
+            CursorStyle::Custom(cursor_id) => self
+                .custom_cursors
+                .borrow()
+                .get(&cursor_id)
+                .cloned()
+                .unwrap_or_else(|| "default".into()),
+            CursorStyle::None => "none".into(),
         };
 
         if let Some(document) = self.browser_window.document() {
             if let Some(body) = document.body() {
-                if let Err(error) = body.style().set_property("cursor", css_cursor) {
+                if let Err(error) = body.style().set_property("cursor", &css_cursor) {
                     log::warn!("Failed to set cursor style: {error:?}");
                 }
             }

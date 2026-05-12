@@ -1,5 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
+    collections::HashMap,
     ffi::OsStr,
     path::{Path, PathBuf},
     rc::{Rc, Weak},
@@ -63,6 +64,7 @@ pub(crate) struct WindowsPlatformState {
     jump_list: RefCell<JumpList>,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: Cell<Option<HCURSOR>>,
+    custom_cursors: RefCell<HashMap<CustomCursorId, HCURSOR>>,
     directx_devices: RefCell<Option<DirectXDevices>>,
 }
 
@@ -87,9 +89,66 @@ impl WindowsPlatformState {
             callbacks,
             jump_list: RefCell::new(jump_list),
             current_cursor: Cell::new(current_cursor),
+            custom_cursors: RefCell::new(HashMap::new()),
             directx_devices: RefCell::new(directx_devices),
             menus: RefCell::new(Vec::new()),
         }
+    }
+}
+
+impl Drop for WindowsPlatformState {
+    fn drop(&mut self) {
+        for cursor in self.custom_cursors.get_mut().values() {
+            unsafe {
+                let _ = DestroyCursor(*cursor);
+            }
+        }
+    }
+}
+
+fn create_native_custom_cursor(cursor: &CustomCursor) -> Option<HCURSOR> {
+    unsafe {
+        let width = i32::from(cursor.size.width);
+        let height = i32::from(cursor.size.height);
+        let mut color_bits = Vec::with_capacity(cursor.pixels.len());
+
+        for pixel in cursor.pixels.chunks_exact(4) {
+            let [red, green, blue, alpha] = pixel else {
+                unreachable!();
+            };
+            let alpha_u32 = *alpha as u32;
+            let red = ((*red as u32 * alpha_u32 + 127) / 255) as u8;
+            let green = ((*green as u32 * alpha_u32 + 127) / 255) as u8;
+            let blue = ((*blue as u32 * alpha_u32 + 127) / 255) as u8;
+            color_bits.extend_from_slice(&[blue, green, red, *alpha]);
+        }
+
+        let mask_stride = (width as usize).div_ceil(16) * 2;
+        let mask_bits = vec![0u8; mask_stride * height as usize];
+
+        let color_bitmap = CreateBitmap(width, height, 1, 32, Some(color_bits.as_ptr().cast()));
+        if color_bitmap.is_invalid() {
+            return None;
+        }
+
+        let mask_bitmap = CreateBitmap(width, height, 1, 1, Some(mask_bits.as_ptr().cast()));
+        if mask_bitmap.is_invalid() {
+            let _ = DeleteObject(color_bitmap.into());
+            return None;
+        }
+
+        let icon_info = ICONINFO {
+            fIcon: false.into(),
+            xHotspot: u32::from(cursor.hotspot.x),
+            yHotspot: u32::from(cursor.hotspot.y),
+            hbmMask: mask_bitmap,
+            hbmColor: color_bitmap,
+        };
+        let native_cursor = CreateIconIndirect(&icon_info).log_err().ok();
+        let _ = DeleteObject(color_bitmap.into());
+        let _ = DeleteObject(mask_bitmap.into());
+
+        native_cursor.map(|icon| HCURSOR(icon.0))
     }
 }
 
@@ -658,8 +717,32 @@ impl Platform for WindowsPlatform {
         anyhow::bail!("not yet implemented");
     }
 
+    fn register_custom_cursor(&self, cursor: CustomCursor) -> CustomCursorId {
+        let cursor_id = CustomCursorId::next();
+
+        if let Some(native_cursor) = create_native_custom_cursor(&cursor) {
+            self.inner
+                .state
+                .custom_cursors
+                .borrow_mut()
+                .insert(cursor_id, native_cursor);
+        }
+
+        cursor_id
+    }
+
     fn set_cursor_style(&self, style: CursorStyle) {
-        let hcursor = load_cursor(style);
+        let hcursor = match style {
+            CursorStyle::Custom(cursor_id) => self
+                .inner
+                .state
+                .custom_cursors
+                .borrow()
+                .get(&cursor_id)
+                .copied()
+                .or_else(|| load_cursor(CursorStyle::Arrow)),
+            _ => load_cursor(style),
+        };
         if self.inner.state.current_cursor.get().map(|c| c.0) != hcursor.map(|c| c.0) {
             self.post_message(
                 WM_GPUI_CURSOR_STYLE_CHANGED,

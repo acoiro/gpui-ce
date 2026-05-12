@@ -58,8 +58,8 @@ use async_task::Runnable;
 use futures::channel::oneshot;
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
-use image::codecs::gif::GifDecoder;
-use image::{AnimationDecoder as _, Frame};
+use image::codecs::{gif::GifDecoder, png::PngEncoder};
+use image::{AnimationDecoder as _, ExtendedColorType, Frame, ImageEncoder as _};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use schemars::JsonSchema;
 use seahash::SeaHasher;
@@ -75,7 +75,10 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering::SeqCst},
+    },
 };
 use strum::EnumIter;
 use uuid::Uuid;
@@ -294,6 +297,11 @@ pub trait Platform: 'static {
     fn app_path(&self) -> Result<PathBuf>;
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
 
+    /// Registers a custom cursor and returns an identifier that can be used with
+    /// [`CursorStyle::Custom`].
+    fn register_custom_cursor(&self, _cursor: CustomCursor) -> CustomCursorId {
+        next_custom_cursor_id()
+    }
     fn set_cursor_style(&self, style: CursorStyle);
     fn should_auto_hide_scrollbars(&self) -> bool;
 
@@ -1641,6 +1649,141 @@ impl From<&str> for PromptButton {
     }
 }
 
+static NEXT_CUSTOM_CURSOR_ID: AtomicUsize = AtomicUsize::new(1);
+
+fn next_custom_cursor_id() -> CustomCursorId {
+    CustomCursorId(NEXT_CUSTOM_CURSOR_ID.fetch_add(1, SeqCst))
+}
+
+/// An identifier for a cursor registered with the active platform.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct CustomCursorId(usize);
+
+impl CustomCursorId {
+    pub(crate) fn next() -> Self {
+        next_custom_cursor_id()
+    }
+}
+
+/// Image data and hotspot information for a platform-native custom cursor.
+#[derive(Clone, Debug)]
+pub struct CustomCursor {
+    /// The cursor image pixels in RGBA8 order.
+    pub pixels: Arc<[u8]>,
+    /// The image size in device pixels.
+    pub size: Size<DevicePixels>,
+    /// The active point of the cursor, in image coordinates.
+    pub hotspot: Point<DevicePixels>,
+    /// The ratio between device pixels and logical cursor pixels.
+    pub scale_factor: f32,
+}
+
+impl CustomCursor {
+    /// Creates a custom cursor from RGBA8 pixels and a hotspot.
+    pub fn new(
+        pixels: impl Into<Arc<[u8]>>,
+        size: Size<DevicePixels>,
+        hotspot: Point<DevicePixels>,
+    ) -> Result<Self> {
+        Self::with_scale_factor(pixels, size, hotspot, 1.0)
+    }
+
+    /// Creates a custom cursor from RGBA8 pixels, a hotspot, and a device-pixel scale factor.
+    pub fn with_scale_factor(
+        pixels: impl Into<Arc<[u8]>>,
+        size: Size<DevicePixels>,
+        hotspot: Point<DevicePixels>,
+        scale_factor: f32,
+    ) -> Result<Self> {
+        let pixels = pixels.into();
+        let width = i32::from(size.width);
+        let height = i32::from(size.height);
+
+        anyhow::ensure!(
+            scale_factor.is_finite() && scale_factor > 0.0,
+            "custom cursor scale factor must be positive"
+        );
+        anyhow::ensure!(
+            width > 0 && height > 0,
+            "custom cursor size must be positive"
+        );
+        anyhow::ensure!(
+            i32::from(hotspot.x) >= 0
+                && i32::from(hotspot.x) < width
+                && i32::from(hotspot.y) >= 0
+                && i32::from(hotspot.y) < height,
+            "custom cursor hotspot must be within the cursor image"
+        );
+        anyhow::ensure!(
+            pixels.len() == width as usize * height as usize * 4,
+            "custom cursor pixel buffer must contain width * height * 4 RGBA bytes"
+        );
+
+        Ok(Self {
+            pixels,
+            size,
+            hotspot,
+            scale_factor,
+        })
+    }
+
+    /// Renders an SVG into RGBA8 pixels and creates a custom cursor from it.
+    pub fn from_svg(
+        svg_renderer: &SvgRenderer,
+        bytes: &[u8],
+        size: Size<DevicePixels>,
+        hotspot: Point<DevicePixels>,
+    ) -> Result<Self> {
+        let pixels = svg_renderer.render_rgba(bytes, size)?;
+        Self::new(pixels, size, hotspot)
+    }
+
+    /// Renders an SVG into scaled RGBA8 pixels and creates a custom cursor from it.
+    pub fn from_svg_with_scale_factor(
+        svg_renderer: &SvgRenderer,
+        bytes: &[u8],
+        logical_size: Size<Pixels>,
+        logical_hotspot: Point<Pixels>,
+        scale_factor: f32,
+    ) -> Result<Self> {
+        anyhow::ensure!(
+            scale_factor.is_finite() && scale_factor > 0.0,
+            "custom cursor scale factor must be positive"
+        );
+
+        let size = logical_size
+            .map(|value| DevicePixels((f32::from(value) * scale_factor).round().max(1.0) as i32));
+        let hotspot = logical_hotspot
+            .map(|value| DevicePixels((f32::from(value) * scale_factor).round().max(0.0) as i32));
+        let pixels = svg_renderer.render_rgba(bytes, size)?;
+
+        Self::with_scale_factor(pixels, size, hotspot, scale_factor)
+    }
+
+    /// Returns the cursor image size in logical pixels.
+    pub fn logical_size(&self) -> Size<Pixels> {
+        self.size
+            .map(|value| px(i32::from(value) as f32 / self.scale_factor))
+    }
+
+    /// Returns the cursor hotspot in logical pixels.
+    pub fn logical_hotspot(&self) -> Point<Pixels> {
+        self.hotspot
+            .map(|value| px(i32::from(value) as f32 / self.scale_factor))
+    }
+
+    pub(crate) fn png_bytes(&self) -> Result<Vec<u8>> {
+        let mut png = Vec::new();
+        PngEncoder::new(&mut png).write_image(
+            &self.pixels,
+            u32::from(self.size.width),
+            u32::from(self.size.height),
+            ExtendedColorType::Rgba8,
+        )?;
+        Ok(png)
+    }
+}
+
 /// The style of the cursor (pointer)
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum CursorStyle {
@@ -1730,6 +1873,9 @@ pub enum CursorStyle {
 
     /// Hide the cursor
     None,
+
+    /// A native custom cursor registered on the active platform.
+    Custom(CustomCursorId),
 }
 
 /// A clipboard item that should be copied to the clipboard

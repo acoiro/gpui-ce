@@ -95,6 +95,27 @@ impl SvgRenderer {
         })
     }
 
+    /// Renders SVG bytes into an exact-size RGBA8 pixel buffer.
+    pub fn render_rgba(
+        &self,
+        bytes: &[u8],
+        size: Size<DevicePixels>,
+    ) -> Result<Vec<u8>, usvg::Error> {
+        self.render_pixmap(bytes, SvgSize::Size(size))
+            .map(|pixmap| {
+                let mut pixels = pixmap.take();
+                for pixel in pixels.chunks_exact_mut(4) {
+                    let alpha = pixel[3] as u16;
+                    if alpha != 0 && alpha != 255 {
+                        pixel[0] = ((pixel[0] as u16 * 255 + alpha / 2) / alpha).min(255) as u8;
+                        pixel[1] = ((pixel[1] as u16 * 255 + alpha / 2) / alpha).min(255) as u8;
+                        pixel[2] = ((pixel[2] as u16 * 255 + alpha / 2) / alpha).min(255) as u8;
+                    }
+                }
+                pixels
+            })
+    }
+
     pub(crate) fn render_alpha_mask(
         &self,
         params: &RenderSvgParams,
