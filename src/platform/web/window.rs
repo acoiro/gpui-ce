@@ -103,6 +103,21 @@ impl WebWindow {
             .set_property("display", "block")
             .map_err(|e| anyhow::anyhow!("Failed to set canvas display style: {e:?}"))?;
         style
+            .set_property("position", "fixed")
+            .map_err(|e| anyhow::anyhow!("Failed to set canvas position style: {e:?}"))?;
+        style
+            .set_property("left", "0")
+            .map_err(|e| anyhow::anyhow!("Failed to set canvas left style: {e:?}"))?;
+        style
+            .set_property("top", "0")
+            .map_err(|e| anyhow::anyhow!("Failed to set canvas top style: {e:?}"))?;
+        style
+            .set_property("z-index", "1")
+            .map_err(|e| anyhow::anyhow!("Failed to set canvas z-index style: {e:?}"))?;
+        style
+            .set_property("background", "transparent")
+            .map_err(|e| anyhow::anyhow!("Failed to set canvas background style: {e:?}"))?;
+        style
             .set_property("outline", "none")
             .map_err(|e| anyhow::anyhow!("Failed to set canvas outline style: {e:?}"))?;
         style
@@ -138,7 +153,7 @@ impl WebWindow {
 
         let renderer_config = WgpuSurfaceConfig {
             size: device_size,
-            transparent: false,
+            transparent: true,
         };
 
         let renderer = WgpuRenderer::new_from_canvas(context, &canvas, renderer_config)?;
