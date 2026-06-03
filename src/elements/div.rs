@@ -2435,6 +2435,20 @@ impl Interactivity {
                         }
 
                         let mut pending_mouse_down = pending_mouse_down.borrow_mut();
+                        if let Some(mouse_down) = pending_mouse_down.clone() {
+                            match event.pressed_button {
+                                Some(pressed_button) if pressed_button != mouse_down.button => {
+                                    pending_mouse_down.take();
+                                    window.refresh();
+                                    return;
+                                }
+                                None => {
+                                    return;
+                                }
+                                _ => {}
+                            }
+                        }
+
                         if let Some(mouse_down) = pending_mouse_down.clone()
                             && !cx.has_active_drag()
                             && (event.position - mouse_down.position).magnitude() > DRAG_THRESHOLD

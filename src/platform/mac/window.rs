@@ -8,8 +8,8 @@ use block::ConcreteBlock;
 use cocoa::{
     appkit::{
         NSAppKitVersionNumber, NSAppKitVersionNumber12_0, NSApplication, NSBackingStoreBuffered,
-        NSColor, NSEvent, NSEventModifierFlags, NSFilenamesPboardType, NSPasteboard, NSScreen,
-        NSView, NSViewHeightSizable, NSViewWidthSizable, NSVisualEffectMaterial,
+        NSColor, NSEvent, NSEventMask, NSEventModifierFlags, NSFilenamesPboardType, NSPasteboard,
+        NSScreen, NSView, NSViewHeightSizable, NSViewWidthSizable, NSVisualEffectMaterial,
         NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowButton,
         NSWindowCollectionBehavior, NSWindowOcclusionState, NSWindowOrderingMode,
         NSWindowStyleMask, NSWindowTitleVisibility,
@@ -416,6 +416,7 @@ struct MacWindowState {
     renderer: renderer::Renderer,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>>,
+    mouse_up_monitor: Option<id>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
@@ -425,6 +426,7 @@ struct MacWindowState {
     input_handler: Option<PlatformInputHandler>,
     last_key_equivalent: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
+    synthetic_drag_event: Option<MouseMoveEvent>,
     traffic_light_position: Option<Point<Pixels>>,
     transparent_titlebar: bool,
     previous_modifiers_changed_event: Option<PlatformInput>,
@@ -737,6 +739,7 @@ impl MacWindow {
                 ),
                 request_frame_callback: None,
                 event_callback: None,
+                mouse_up_monitor: None,
                 activate_callback: None,
                 resize_callback: None,
                 moved_callback: None,
@@ -746,6 +749,7 @@ impl MacWindow {
                 input_handler: None,
                 last_key_equivalent: None,
                 synthetic_drag_counter: 0,
+                synthetic_drag_event: None,
                 traffic_light_position: titlebar
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
@@ -776,6 +780,8 @@ impl MacWindow {
                 WINDOW_STATE_IVAR,
                 Arc::into_raw(window.0.clone()) as *const c_void,
             );
+            let mouse_up_monitor = install_mouse_up_monitor(window.0.clone());
+            window.0.lock().mouse_up_monitor = Some(mouse_up_monitor);
 
             if let Some(title) = titlebar
                 .as_ref()
@@ -1695,12 +1701,82 @@ unsafe fn drop_window_state(object: &Object) {
     }
 }
 
+fn install_mouse_up_monitor(window_state: Arc<Mutex<MacWindowState>>) -> id {
+    let block = ConcreteBlock::new(move |native_event: id| -> id {
+        recover_synthetic_drag_mouse_up(&window_state, native_event)
+    });
+    let block = block.copy();
+    let mask = NSEventMask::NSLeftMouseUpMask
+        | NSEventMask::NSRightMouseUpMask
+        | NSEventMask::NSOtherMouseUpMask;
+    unsafe {
+        msg_send![
+            class!(NSEvent),
+            addLocalMonitorForEventsMatchingMask: mask
+            handler: block
+        ]
+    }
+}
+
+fn recover_synthetic_drag_mouse_up(
+    window_state: &Arc<Mutex<MacWindowState>>,
+    native_event: id,
+) -> id {
+    let mut lock = window_state.lock();
+    let Some(drag_event) = lock.synthetic_drag_event.clone() else {
+        return native_event;
+    };
+    let Some(expected_button) = drag_event.pressed_button else {
+        lock.synthetic_drag_event = None;
+        return native_event;
+    };
+
+    let window_height = lock.content_size().height;
+    let Some(PlatformInput::MouseUp(mut event)) =
+        (unsafe { platform_input_from_native(native_event, Some(window_height)) })
+    else {
+        return native_event;
+    };
+
+    if event.button != expected_button {
+        return native_event;
+    }
+
+    let event_window: id = unsafe { msg_send![native_event, window] };
+    if event_window != lock.native_window {
+        event.position = drag_event.position;
+    }
+
+    let executor = lock.foreground_executor.clone();
+    lock.synthetic_drag_counter += 1;
+    lock.synthetic_drag_event = None;
+    drop(lock);
+    let window_state = Arc::clone(window_state);
+    executor
+        .spawn(async move {
+            let mut lock = window_state.lock();
+            let Some(mut callback) = lock.event_callback.take() else {
+                return;
+            };
+            drop(lock);
+            callback(PlatformInput::MouseUp(event));
+            window_state.lock().event_callback = Some(callback);
+        })
+        .detach();
+    nil
+}
+
 extern "C" fn yes(_: &Object, _: Sel) -> BOOL {
     YES
 }
 
 extern "C" fn dealloc_window(this: &Object, _: Sel) {
     unsafe {
+        let window_state = get_window_state(this);
+        if let Some(mouse_up_monitor) = window_state.lock().mouse_up_monitor.take() {
+            let _: () = msg_send![class!(NSEvent), removeMonitor: mouse_up_monitor];
+        }
+        drop(window_state);
         drop_window_state(this);
         let _: () = msg_send![super(this, class!(NSWindow)), dealloc];
     }
@@ -1956,6 +2032,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                 // with these ones.
                 if !lock.external_files_dragged {
                     lock.synthetic_drag_counter += 1;
+                    lock.synthetic_drag_event = Some(event.clone());
                     let executor = lock.foreground_executor.clone();
                     executor
                         .spawn(synthetic_drag(
@@ -1970,6 +2047,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
 
             PlatformInput::MouseUp(MouseUpEvent { .. }) => {
                 lock.synthetic_drag_counter += 1;
+                lock.synthetic_drag_event = None;
             }
 
             PlatformInput::ModifiersChanged(ModifiersChangedEvent {
@@ -2537,11 +2615,33 @@ async fn synthetic_drag(
     event: MouseMoveEvent,
     executor: BackgroundExecutor,
 ) {
+    let Some(button) = event.pressed_button else {
+        return;
+    };
+
     loop {
         executor.timer(Duration::from_millis(16)).await;
         if let Some(window_state) = window_state.upgrade() {
             let mut lock = window_state.lock();
             if lock.synthetic_drag_counter == drag_id {
+                if !mouse_button_is_pressed(button) {
+                    lock.synthetic_drag_counter += 1;
+                    lock.synthetic_drag_event = None;
+                    if let Some(mut callback) = lock.event_callback.take() {
+                        let position = event.position;
+                        let event = PlatformInput::MouseUp(MouseUpEvent {
+                            button,
+                            position,
+                            modifiers: event.modifiers,
+                            click_count: 1,
+                        });
+                        drop(lock);
+                        callback(event);
+                        window_state.lock().event_callback = Some(callback);
+                    }
+                    break;
+                }
+
                 if let Some(mut callback) = lock.event_callback.take() {
                     drop(lock);
                     callback(PlatformInput::MouseMove(event.clone()));
@@ -2552,6 +2652,17 @@ async fn synthetic_drag(
             }
         }
     }
+}
+
+fn mouse_button_is_pressed(button: MouseButton) -> bool {
+    let button_index = match button {
+        MouseButton::Left => 0,
+        MouseButton::Right => 1,
+        MouseButton::Middle => 2,
+        MouseButton::Navigate(_) => return true,
+    };
+    let pressed_buttons: NSUInteger = unsafe { msg_send![class!(NSEvent), pressedMouseButtons] };
+    pressed_buttons & (1usize << button_index) as NSUInteger != 0
 }
 
 /// Sends the specified FileDropEvent using `PlatformInput::FileDrop` to the window
