@@ -2048,6 +2048,50 @@ impl RawClipboardItem {
     }
 }
 
+#[cfg(test)]
+mod clipboard_tests {
+    use std::path::PathBuf;
+
+    use smallvec::smallvec;
+
+    use super::*;
+
+    #[test]
+    fn raw_clipboard_item_from_clipboard_item_preserves_supported_entries() {
+        let image_bytes = vec![1, 2, 3, 4];
+        let item = ClipboardItem {
+            entries: vec![
+                ClipboardEntry::String(ClipboardString::new("plain text".to_string())),
+                ClipboardEntry::Image(Image::from_bytes(ImageFormat::Png, image_bytes.clone())),
+                ClipboardEntry::ExternalPaths(crate::ExternalPaths(smallvec![
+                    PathBuf::from("a.txt"),
+                    PathBuf::from("b.txt"),
+                ])),
+            ],
+        };
+
+        assert_eq!(
+            RawClipboardItem::from_clipboard_item(&item),
+            RawClipboardItem {
+                entries: vec![
+                    RawClipboardEntry {
+                        format: "text/plain".to_string(),
+                        bytes: b"plain text".to_vec(),
+                    },
+                    RawClipboardEntry {
+                        format: "image/png".to_string(),
+                        bytes: image_bytes,
+                    },
+                    RawClipboardEntry {
+                        format: "text/plain".to_string(),
+                        bytes: b"a.txt\nb.txt".to_vec(),
+                    },
+                ],
+            }
+        );
+    }
+}
+
 impl From<ClipboardString> for ClipboardEntry {
     fn from(value: ClipboardString) -> Self {
         Self::String(value)

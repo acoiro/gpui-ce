@@ -26,8 +26,8 @@ use gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, CustomCursor,
     CustomCursorId, DisplayId, ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu,
     PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformWindow, Result, RunnableVariant, Task, ThermalState,
-    WindowAppearance, WindowParams,
+    PlatformTextSystem, PlatformWindow, RawClipboardItem, Result, RunnableVariant, Task,
+    ThermalState, WindowAppearance, WindowParams,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use gpui::{Pixels, Point, px};
@@ -89,6 +89,10 @@ pub(crate) trait LinuxClient {
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_primary(&self) -> Option<ClipboardItem>;
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
+    fn read_raw_from_clipboard(&self) -> Option<RawClipboardItem> {
+        self.read_from_clipboard()
+            .map(|item| RawClipboardItem::from_clipboard_item(&item))
+    }
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
     fn run(&self);
@@ -629,6 +633,10 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.inner.read_from_clipboard()
+    }
+
+    fn read_raw_from_clipboard(&self) -> Option<RawClipboardItem> {
+        self.inner.read_raw_from_clipboard()
     }
 
     fn add_recent_document(&self, _path: &Path) {}

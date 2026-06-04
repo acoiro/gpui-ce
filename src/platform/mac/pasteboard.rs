@@ -432,6 +432,67 @@ mod tests {
     }
 
     #[test]
+    fn test_read_raw_plaintext_and_metadata_entries() {
+        let pasteboard = Pasteboard::unique();
+        let item = ClipboardItem {
+            entries: vec![ClipboardEntry::String(
+                ClipboardString::new("raw text".to_string()).with_json_metadata(vec![1, 2, 3]),
+            )],
+        };
+
+        pasteboard.write(item);
+
+        let raw = pasteboard.read_raw().expect("raw pasteboard entries");
+        assert!(
+            raw.entries.iter().any(|entry| {
+                entry.format == "public.utf8-plain-text" && entry.bytes == b"raw text"
+            }),
+            "expected raw text entry, got {raw:?}"
+        );
+        assert!(
+            raw.entries
+                .iter()
+                .any(|entry| entry.format == "zed-text-hash" && entry.bytes.len() == 8),
+            "expected text hash entry, got {raw:?}"
+        );
+        assert!(
+            raw.entries
+                .iter()
+                .any(|entry| entry.format == "zed-metadata" && entry.bytes == b"[1,2,3]"),
+            "expected metadata entry, got {raw:?}"
+        );
+    }
+
+    #[test]
+    fn test_read_raw_external_file_entries() {
+        let pasteboard = Pasteboard::unique();
+
+        unsafe {
+            simulate_external_file_copy(&pasteboard, &["/raw-file.txt"]);
+        }
+
+        let raw = pasteboard.read_raw().expect("raw pasteboard entries");
+        let filename_type = unsafe {
+            CStr::from_ptr(NSString::UTF8String(NSFilenamesPboardType))
+                .to_string_lossy()
+                .into_owned()
+        };
+        assert!(
+            raw.entries
+                .iter()
+                .any(|entry| entry.format == filename_type && !entry.bytes.is_empty()),
+            "expected raw filename entry, got {raw:?}"
+        );
+        assert!(
+            raw.entries
+                .iter()
+                .any(|entry| entry.format == "public.utf8-plain-text"
+                    && entry.bytes == b"/raw-file.txt"),
+            "expected raw text path entry, got {raw:?}"
+        );
+    }
+
+    #[test]
     fn test_read_external_path() {
         let pasteboard = Pasteboard::unique();
 

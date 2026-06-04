@@ -480,6 +480,71 @@ impl TestScreenCaptureSource {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::{ClipboardEntry, ClipboardString, RawClipboardEntry, TestDispatcher};
+
+    use super::*;
+
+    fn test_platform() -> Rc<TestPlatform> {
+        let dispatcher = Arc::new(TestDispatcher::new(0));
+        TestPlatform::new(
+            BackgroundExecutor::new(dispatcher.clone()),
+            ForegroundExecutor::new(dispatcher),
+        )
+    }
+
+    #[test]
+    fn raw_clipboard_round_trips_exact_entries() {
+        let platform = test_platform();
+        let raw = RawClipboardItem {
+            entries: vec![
+                RawClipboardEntry {
+                    format: "text/plain".to_string(),
+                    bytes: b"hello".to_vec(),
+                },
+                RawClipboardEntry {
+                    format: "application/gpui-test".to_string(),
+                    bytes: vec![1, 2, 3],
+                },
+            ],
+        };
+
+        platform.write_raw_to_clipboard(raw.clone());
+
+        assert_eq!(platform.read_raw_from_clipboard(), Some(raw));
+    }
+
+    #[test]
+    fn high_level_clipboard_write_clears_previous_raw_entries() {
+        let platform = test_platform();
+        platform.write_raw_to_clipboard(RawClipboardItem {
+            entries: vec![RawClipboardEntry {
+                format: "application/gpui-test".to_string(),
+                bytes: vec![1, 2, 3],
+            }],
+        });
+
+        platform.write_to_clipboard(ClipboardItem {
+            entries: vec![ClipboardEntry::String(ClipboardString::new(
+                "plain".to_string(),
+            ))],
+        });
+
+        assert_eq!(
+            platform.read_raw_from_clipboard(),
+            Some(RawClipboardItem {
+                entries: vec![RawClipboardEntry {
+                    format: "text/plain".to_string(),
+                    bytes: b"plain".to_vec(),
+                }],
+            })
+        );
+    }
+}
+
 struct TestKeyboardLayout;
 
 impl PlatformKeyboardLayout for TestKeyboardLayout {

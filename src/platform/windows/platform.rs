@@ -765,6 +765,10 @@ impl Platform for WindowsPlatform {
         read_from_clipboard()
     }
 
+    fn read_raw_from_clipboard(&self) -> Option<RawClipboardItem> {
+        crate::platform::windows::clipboard::read_raw_from_clipboard()
+    }
+
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
         let password = password.to_vec();
         let mut username = username.encode_utf16().chain(Some(0)).collect_vec();

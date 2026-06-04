@@ -96,8 +96,8 @@ use gpui::{
     ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
     Pixels, PlatformDisplay, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point,
-    ScrollDelta, ScrollWheelEvent, SharedString, Size, TaskTiming, TouchPhase, WindowParams, point,
-    profiler, px, size,
+    RawClipboardItem, ScrollDelta, ScrollWheelEvent, SharedString, Size, TaskTiming, TouchPhase,
+    WindowParams, point, profiler, px, size,
 };
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
     zwp_linux_dmabuf_feedback_v1, zwp_linux_dmabuf_v1,
@@ -898,6 +898,10 @@ impl LinuxClient for WaylandClient {
 
     fn read_from_clipboard(&self) -> Option<gpui::ClipboardItem> {
         self.0.borrow_mut().clipboard.read()
+    }
+
+    fn read_raw_from_clipboard(&self) -> Option<RawClipboardItem> {
+        self.0.borrow_mut().clipboard.read_raw()
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {

@@ -12,14 +12,20 @@ use windows::Win32::{
             SetClipboardData,
         },
         Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock},
-        Ole::{CF_DIB, CF_HDROP, CF_UNICODETEXT},
+        Ole::{
+            CF_BITMAP, CF_DIB, CF_DIBV5, CF_DIF, CF_DSPBITMAP, CF_DSPENHMETAFILE,
+            CF_DSPMETAFILEPICT, CF_DSPTEXT, CF_ENHMETAFILE, CF_HDROP, CF_LOCALE, CF_METAFILEPICT,
+            CF_OEMTEXT, CF_OWNERDISPLAY, CF_PALETTE, CF_PENDATA, CF_RIFF, CF_SYLK, CF_TEXT,
+            CF_TIFF, CF_UNICODETEXT, CF_WAVE,
+        },
     },
     UI::Shell::{DragQueryFileW, HDROP},
 };
 use windows::core::{Owned, PCWSTR};
 
 use gpui::{
-    ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, Image, ImageFormat, hash,
+    ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, Image, ImageFormat,
+    RawClipboardEntry, RawClipboardItem, hash,
 };
 
 const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
@@ -127,6 +133,32 @@ pub(crate) fn read_from_clipboard() -> Option<ClipboardItem> {
     Some(ClipboardItem { entries })
 }
 
+pub(crate) fn read_raw_from_clipboard() -> Option<RawClipboardItem> {
+    let _clip = ClipboardGuard::open()?;
+
+    let count = unsafe { CountClipboardFormats() };
+    let mut format = 0;
+    let mut entries = Vec::new();
+
+    for _ in 0..count {
+        format = unsafe { EnumClipboardFormats(format) };
+        if format == 0 {
+            break;
+        }
+
+        let Some(locked) = get_clipboard_data(format) else {
+            continue;
+        };
+
+        entries.push(RawClipboardEntry {
+            format: clipboard_format_name(format),
+            bytes: locked.as_bytes().to_vec(),
+        });
+    }
+
+    (!entries.is_empty()).then_some(RawClipboardItem { entries })
+}
+
 pub(crate) fn with_file_names<F>(hdrop: HDROP, mut f: F)
 where
     F: FnMut(String),
@@ -175,6 +207,48 @@ fn get_clipboard_string(format: u32) -> Option<String> {
 
 fn is_image_format(format: u32) -> bool {
     IMAGE_FORMATS_MAP.contains_key(&format) || format == CF_DIB.0 as u32
+}
+
+fn clipboard_format_name(format: u32) -> String {
+    if let Some(name) = standard_clipboard_format_name(format) {
+        return name.to_string();
+    }
+
+    let mut buffer = [0u16; 256];
+    let len = unsafe { GetClipboardFormatNameW(format, &mut buffer) };
+    if len > 0 {
+        return String::from_utf16_lossy(&buffer[..len as usize]);
+    }
+
+    format!("CF_{format}")
+}
+
+fn standard_clipboard_format_name(format: u32) -> Option<&'static str> {
+    Some(match format {
+        format if format == CF_TEXT.0 as u32 => "CF_TEXT",
+        format if format == CF_BITMAP.0 as u32 => "CF_BITMAP",
+        format if format == CF_METAFILEPICT.0 as u32 => "CF_METAFILEPICT",
+        format if format == CF_SYLK.0 as u32 => "CF_SYLK",
+        format if format == CF_DIF.0 as u32 => "CF_DIF",
+        format if format == CF_TIFF.0 as u32 => "CF_TIFF",
+        format if format == CF_OEMTEXT.0 as u32 => "CF_OEMTEXT",
+        format if format == CF_DIB.0 as u32 => "CF_DIB",
+        format if format == CF_PALETTE.0 as u32 => "CF_PALETTE",
+        format if format == CF_PENDATA.0 as u32 => "CF_PENDATA",
+        format if format == CF_RIFF.0 as u32 => "CF_RIFF",
+        format if format == CF_WAVE.0 as u32 => "CF_WAVE",
+        format if format == CF_UNICODETEXT.0 as u32 => "CF_UNICODETEXT",
+        format if format == CF_ENHMETAFILE.0 as u32 => "CF_ENHMETAFILE",
+        format if format == CF_HDROP.0 as u32 => "CF_HDROP",
+        format if format == CF_LOCALE.0 as u32 => "CF_LOCALE",
+        format if format == CF_DIBV5.0 as u32 => "CF_DIBV5",
+        format if format == CF_OWNERDISPLAY.0 as u32 => "CF_OWNERDISPLAY",
+        format if format == CF_DSPTEXT.0 as u32 => "CF_DSPTEXT",
+        format if format == CF_DSPBITMAP.0 as u32 => "CF_DSPBITMAP",
+        format if format == CF_DSPMETAFILEPICT.0 as u32 => "CF_DSPMETAFILEPICT",
+        format if format == CF_DSPENHMETAFILE.0 as u32 => "CF_DSPENHMETAFILE",
+        _ => return None,
+    })
 }
 
 fn write_string(item: &ClipboardString) -> Result<()> {
@@ -384,5 +458,24 @@ impl LockedGlobal {
 impl Drop for LockedGlobal {
     fn drop(&mut self) {
         unsafe { GlobalUnlock(self.global).ok() };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn standard_clipboard_format_names_are_stable() {
+        assert_eq!(
+            super::clipboard_format_name(super::CF_UNICODETEXT.0 as u32),
+            "CF_UNICODETEXT"
+        );
+        assert_eq!(
+            super::clipboard_format_name(super::CF_HDROP.0 as u32),
+            "CF_HDROP"
+        );
+        assert_eq!(
+            super::clipboard_format_name(super::CF_DIB.0 as u32),
+            "CF_DIB"
+        );
     }
 }

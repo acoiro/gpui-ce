@@ -22,6 +22,12 @@ API shape, implement wasm next, then fill in Windows and Linux.
   user-activation rules.
 - wasm target checking now uses the existing non-`font-kit` font-matching
   fallback, because `font-kit` is only declared for native targets.
+- Windows raw reads enumerate clipboard formats, name standard/custom formats,
+  and copy lockable `HGLOBAL` payloads.
+- Wayland raw reads use the current data-offer MIME list and read each offered
+  MIME payload.
+- X11 raw reads query `TARGETS`, request each payload target, and expose atom
+  names as raw entry formats.
 
 ## API Shape
 
@@ -65,33 +71,39 @@ API shape, implement wasm next, then fill in Windows and Linux.
 ## Other Platforms
 
 - Windows:
+  - Status: implemented.
   - enumerate formats with `EnumClipboardFormats`
   - name formats using known `CF_*` labels or `GetClipboardFormatNameW`
   - copy `HGLOBAL` bytes into `RawClipboardEntry`
 - Wayland:
+  - Status: implemented.
   - use existing `DataOffer` MIME-type tracking
   - read each offered MIME type into raw entries
   - preserve current high-level text/image behavior
 - X11:
+  - Status: implemented.
   - query `TARGETS`
   - request each target
   - convert atoms to names
   - preserve current high-level text/image behavior
 - Visual/test platforms:
   - keep raw clipboard storage mirrored with high-level clipboard storage
+  - Status: implemented.
   - add tests for raw storage and fallback conversion
 
 ## Tests
 
-- Unit-test `RawClipboardItem::from_clipboard_item`.
-- Unit-test test-platform raw write/read behavior.
+- Unit-test `RawClipboardItem::from_clipboard_item`: implemented.
+- Unit-test test-platform raw write/read behavior: implemented.
 - wasm compile check for `wasm32-unknown-unknown`: passing in the pending
   worktree.
 - Add platform helper tests where practical:
-  - mac pasteboard raw entries
-  - Windows format-name mapping
-  - Wayland MIME conversion
-  - X11 atom-name conversion
+  - mac pasteboard raw entries: implemented.
+  - Windows format-name mapping: implemented.
+  - Wayland MIME conversion: implemented.
+  - X11 `TARGETS` parsing: implemented.
+  - X11 atom-name conversion: still needs a live X11 integration test or a
+    mockable atom-name layer.
 
 ## Notes
 

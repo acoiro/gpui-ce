@@ -65,7 +65,7 @@ use gpui::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, CustomCursor, CustomCursorId, DisplayId,
     FileDropEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels,
     PlatformDisplay, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point,
-    RequestFrameOptions, ScrollDelta, Size, TouchPhase, WindowParams, point, px,
+    RawClipboardItem, RequestFrameOptions, ScrollDelta, Size, TouchPhase, WindowParams, point, px,
 };
 
 /// Value for DeviceId parameters which selects all devices.
@@ -1691,6 +1691,15 @@ impl LinuxClient for X11Client {
             .clipboard
             .get_any(clipboard::ClipboardKind::Clipboard)
             .context("X11: Failed to read from clipboard (clipboard)")
+            .log_with_level(log::Level::Debug)
+    }
+
+    fn read_raw_from_clipboard(&self) -> Option<RawClipboardItem> {
+        let state = self.0.borrow_mut();
+        state
+            .clipboard
+            .get_raw(clipboard::ClipboardKind::Clipboard)
+            .context("X11: Failed to read raw clipboard (clipboard)")
             .log_with_level(log::Level::Debug)
     }
 

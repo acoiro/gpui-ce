@@ -11,7 +11,9 @@ use wayland_client::{Connection, protocol::wl_data_offer::WlDataOffer};
 use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1;
 
 use crate::platform::linux::{WaylandClientStatePtr, platform::read_fd};
-use gpui::{ClipboardEntry, ClipboardItem, Image, ImageFormat, hash};
+use gpui::{
+    ClipboardEntry, ClipboardItem, Image, ImageFormat, RawClipboardEntry, RawClipboardItem, hash,
+};
 
 /// Text mime types that we'll offer to other programs.
 pub(crate) const TEXT_MIME_TYPES: [&str; 3] =
@@ -32,8 +34,10 @@ pub(crate) struct Clipboard {
 
     // External clipboard
     cached_read: Option<ClipboardItem>,
+    cached_raw_read: Option<RawClipboardItem>,
     current_offer: Option<DataOffer<WlDataOffer>>,
     cached_primary_read: Option<ClipboardItem>,
+    cached_primary_raw_read: Option<RawClipboardItem>,
     current_primary_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>,
 }
 
@@ -133,6 +137,77 @@ impl<T: ReceiveData> DataOffer<T> {
         }
         None
     }
+
+    fn read_raw(&self, connection: &Connection) -> Option<RawClipboardItem> {
+        self.read_raw_with(|mime_type| self.read_bytes(connection, mime_type))
+    }
+
+    fn read_raw_with<F>(&self, mut read_bytes: F) -> Option<RawClipboardItem>
+    where
+        F: FnMut(&str) -> Option<Vec<u8>>,
+    {
+        let mut entries = Vec::new();
+
+        for mime_type in &self.mime_types {
+            if let Some(bytes) = read_bytes(mime_type) {
+                entries.push(RawClipboardEntry {
+                    format: mime_type.clone(),
+                    bytes,
+                });
+            }
+        }
+
+        (!entries.is_empty()).then_some(RawClipboardItem { entries })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::fd::BorrowedFd;
+
+    use super::*;
+
+    #[derive(Clone, Debug)]
+    struct TestOffer;
+
+    impl ReceiveData for TestOffer {
+        fn receive_data(&self, _mime_type: String, _fd: BorrowedFd<'_>) {
+            unreachable!("read_raw_with should not call receive_data")
+        }
+    }
+
+    #[test]
+    fn read_raw_preserves_mime_type_order_and_payloads() {
+        let mut offer = DataOffer::new(TestOffer);
+        offer.add_mime_type("text/plain;charset=utf-8".to_string());
+        offer.add_mime_type("image/png".to_string());
+        offer.add_mime_type("application/missing".to_string());
+
+        let item = offer
+            .read_raw_with(|mime_type| match mime_type {
+                "text/plain;charset=utf-8" => Some(b"hello".to_vec()),
+                "image/png" => Some(vec![0x89, b'P', b'N', b'G']),
+                "application/missing" => None,
+                _ => unreachable!("unexpected MIME type {mime_type}"),
+            })
+            .expect("raw MIME entries");
+
+        assert_eq!(
+            item,
+            RawClipboardItem {
+                entries: vec![
+                    RawClipboardEntry {
+                        format: "text/plain;charset=utf-8".to_string(),
+                        bytes: b"hello".to_vec(),
+                    },
+                    RawClipboardEntry {
+                        format: "image/png".to_string(),
+                        bytes: vec![0x89, b'P', b'N', b'G'],
+                    },
+                ],
+            }
+        );
+    }
 }
 
 impl Clipboard {
@@ -149,8 +224,10 @@ impl Clipboard {
             primary_contents: None,
 
             cached_read: None,
+            cached_raw_read: None,
             current_offer: None,
             cached_primary_read: None,
+            cached_primary_raw_read: None,
             current_primary_offer: None,
         }
     }
@@ -165,11 +242,13 @@ impl Clipboard {
 
     pub fn set_offer(&mut self, data_offer: Option<DataOffer<WlDataOffer>>) {
         self.cached_read = None;
+        self.cached_raw_read = None;
         self.current_offer = data_offer;
     }
 
     pub fn set_primary_offer(&mut self, data_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>) {
         self.cached_primary_read = None;
+        self.cached_primary_raw_read = None;
         self.current_primary_offer = data_offer;
     }
 
@@ -211,6 +290,25 @@ impl Clipboard {
         Some(item)
     }
 
+    pub fn read_raw(&mut self) -> Option<RawClipboardItem> {
+        let offer = self.current_offer.as_ref()?;
+        if let Some(cached) = self.cached_raw_read.clone() {
+            return Some(cached);
+        }
+
+        if offer.has_mime_type(&self.self_mime) {
+            return self
+                .contents
+                .as_ref()
+                .map(RawClipboardItem::from_clipboard_item);
+        }
+
+        let item = offer.read_raw(&self.connection)?;
+
+        self.cached_raw_read = Some(item.clone());
+        Some(item)
+    }
+
     pub fn read_primary(&mut self) -> Option<ClipboardItem> {
         let offer = self.current_primary_offer.as_ref()?;
         if let Some(cached) = self.cached_primary_read.clone() {
@@ -226,6 +324,25 @@ impl Clipboard {
             .or_else(|| offer.read_image(&self.connection))?;
 
         self.cached_primary_read = Some(item.clone());
+        Some(item)
+    }
+
+    pub fn read_primary_raw(&mut self) -> Option<RawClipboardItem> {
+        let offer = self.current_primary_offer.as_ref()?;
+        if let Some(cached) = self.cached_primary_raw_read.clone() {
+            return Some(cached);
+        }
+
+        if offer.has_mime_type(&self.self_mime) {
+            return self
+                .primary_contents
+                .as_ref()
+                .map(RawClipboardItem::from_clipboard_item);
+        }
+
+        let item = offer.read_raw(&self.connection)?;
+
+        self.cached_primary_raw_read = Some(item.clone());
         Some(item)
     }
 

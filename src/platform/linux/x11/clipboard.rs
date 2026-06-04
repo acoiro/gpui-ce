@@ -47,7 +47,7 @@ use x11rb::{
     wrapper::ConnectionExt as _,
 };
 
-use gpui::{ClipboardItem, Image, ImageFormat, hash};
+use gpui::{ClipboardItem, Image, ImageFormat, RawClipboardEntry, RawClipboardItem, hash};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -62,6 +62,8 @@ x11rb::atom_manager! {
         CLIPBOARD_MANAGER,
         SAVE_TARGETS,
         TARGETS,
+        TIMESTAMP,
+        MULTIPLE,
         ATOM,
         INCR,
 
@@ -360,6 +362,86 @@ impl Inner {
         }
         log::trace!("All conversions to supported formats failed.");
         Err(Error::ContentNotAvailable)
+    }
+
+    fn read_raw(&self, selection: ClipboardKind) -> Result<RawClipboardItem> {
+        if self.is_owner(selection)? {
+            return self.read_owned_raw(selection);
+        }
+
+        let reader = XContext::new()?;
+        let targets = self.read_single(&reader, selection, self.atoms.TARGETS)?;
+        if targets.format != self.atoms.ATOM {
+            log::trace!(
+                "Unexpected clipboard TARGETS format {}",
+                self.atom_name(targets.format)
+            );
+            return Err(Error::ConversionFailure);
+        }
+
+        let mut entries = Vec::new();
+        for target in Self::parse_formats(&targets.bytes) {
+            if self.is_control_target(target) {
+                continue;
+            }
+
+            match self.read_single(&reader, selection, target) {
+                Ok(data) => {
+                    if self.is_control_target(data.format) {
+                        continue;
+                    }
+                    entries.push(RawClipboardEntry {
+                        format: self.atom_name(data.format).to_string(),
+                        bytes: data.bytes,
+                    });
+                }
+                Err(Error::ContentNotAvailable) => {}
+                Err(error) => {
+                    log::trace!(
+                        "Conversion to {} failed while reading raw clipboard data: {}",
+                        self.atom_name(target),
+                        error
+                    );
+                }
+            }
+        }
+
+        if entries.is_empty() {
+            Err(Error::ContentNotAvailable)
+        } else {
+            Ok(RawClipboardItem { entries })
+        }
+    }
+
+    fn read_owned_raw(&self, selection: ClipboardKind) -> Result<RawClipboardItem> {
+        let data = self.selection_of(selection).data.read();
+        let Some(data_list) = &*data else {
+            return Err(Error::ContentNotAvailable);
+        };
+
+        let entries = data_list
+            .iter()
+            .filter(|data| !self.is_control_target(data.format))
+            .map(|data| RawClipboardEntry {
+                format: self.atom_name(data.format).to_string(),
+                bytes: data.bytes.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        if entries.is_empty() {
+            Err(Error::ContentNotAvailable)
+        } else {
+            Ok(RawClipboardItem { entries })
+        }
+    }
+
+    fn is_control_target(&self, atom: Atom) -> bool {
+        atom == self.atoms.TARGETS
+            || atom == self.atoms.SAVE_TARGETS
+            || atom == self.atoms.TIMESTAMP
+            || atom == self.atoms.MULTIPLE
+            || atom == self.atoms.ATOM
+            || atom == self.atoms.INCR
     }
 
     fn parse_formats(bytes: &[u8]) -> Vec<Atom> {
@@ -1085,6 +1167,10 @@ impl Clipboard {
         Ok(ClipboardItem::new_string(text))
     }
 
+    pub(crate) fn get_raw(&self, selection: ClipboardKind) -> Result<RawClipboardItem> {
+        self.inner.read_raw(selection)
+    }
+
     pub fn is_owner(&self, selection: ClipboardKind) -> bool {
         self.inner.is_owner(selection).unwrap_or(false)
     }
@@ -1146,6 +1232,30 @@ impl Drop for Clipboard {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_formats_decodes_x11_target_atoms() {
+        let atoms = [1_u32, 42, 0xAABBCCDD];
+        let mut bytes = Vec::new();
+        for atom in atoms {
+            bytes.extend_from_slice(&atom.to_le_bytes());
+        }
+
+        assert_eq!(Inner::parse_formats(&bytes), atoms.to_vec());
+    }
+
+    #[test]
+    fn parse_formats_ignores_partial_trailing_atom() {
+        let mut bytes = 7_u32.to_le_bytes().to_vec();
+        bytes.extend_from_slice(&[1, 2, 3]);
+
+        assert_eq!(Inner::parse_formats(&bytes), vec![7]);
     }
 }
 

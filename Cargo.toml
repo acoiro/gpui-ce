@@ -124,7 +124,7 @@ util = { package = "gpui_util", path = "crates/gpui_util" }
 util_macros = { package = "gpui_util_macros", version = "0.2.2" }
 usvg = { version = "0.45.0", default-features = false }
 url = "2"
-uuid = { version = "1.1.2", features = ["v5", "v7", "serde"] }
+uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 waker-fn = "1.2.0"
 web-time = "1"
 async-channel = "2"
