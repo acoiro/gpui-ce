@@ -512,7 +512,7 @@ impl CosmicTextSystemState {
     }
 }
 
-#[cfg(feature = "font-kit")]
+#[cfg(all(feature = "font-kit", not(target_family = "wasm")))]
 fn find_best_match(
     font: &Font,
     candidates: &[FontId],
@@ -538,7 +538,7 @@ fn find_best_match(
     Ok(ix)
 }
 
-#[cfg(not(feature = "font-kit"))]
+#[cfg(any(not(feature = "font-kit"), target_family = "wasm"))]
 fn find_best_match(
     font: &Font,
     candidates: &[FontId],
@@ -601,7 +601,7 @@ fn cosmic_font_features(features: &FontFeatures) -> Result<CosmicFontFeatures> {
     Ok(result)
 }
 
-#[cfg(feature = "font-kit")]
+#[cfg(all(feature = "font-kit", not(target_family = "wasm")))]
 fn font_into_properties(font: &gpui::Font) -> font_kit::properties::Properties {
     font_kit::properties::Properties {
         style: match font.style {
@@ -614,7 +614,7 @@ fn font_into_properties(font: &gpui::Font) -> font_kit::properties::Properties {
     }
 }
 
-#[cfg(feature = "font-kit")]
+#[cfg(all(feature = "font-kit", not(target_family = "wasm")))]
 fn face_info_into_properties(
     face_info: &cosmic_text::fontdb::FaceInfo,
 ) -> font_kit::properties::Properties {

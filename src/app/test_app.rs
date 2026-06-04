@@ -28,8 +28,8 @@ use crate::{
     AnyWindowHandle, App, AppCell, AppContext, AsyncApp, BackgroundExecutor, BorrowAppContext,
     Bounds, ClipboardItem, Context, Entity, ForegroundExecutor, Global, InputEvent, Keystroke,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform,
-    PlatformTextSystem, Point, Render, Size, Task, TestDispatcher, TestPlatform, TextSystem,
-    Window, WindowBounds, WindowHandle, WindowOptions, app::GpuiMode,
+    PlatformTextSystem, Point, RawClipboardItem, Render, Result, Size, Task, TestDispatcher,
+    TestPlatform, TextSystem, Window, WindowBounds, WindowHandle, WindowOptions, app::GpuiMode,
 };
 use std::{future::Future, rc::Rc, sync::Arc, time::Duration};
 
@@ -274,6 +274,31 @@ impl TestApp {
     /// Read from the simulated clipboard.
     pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.platform.read_from_clipboard()
+    }
+
+    /// Asynchronously write to the simulated clipboard.
+    pub fn write_clipboard(&self, item: ClipboardItem) -> Task<Result<()>> {
+        self.platform.write_clipboard(item)
+    }
+
+    /// Asynchronously read from the simulated clipboard.
+    pub fn read_clipboard(&self) -> Task<Result<Option<ClipboardItem>>> {
+        self.platform.read_clipboard()
+    }
+
+    /// Write raw platform entries to the simulated clipboard.
+    pub fn write_raw_to_clipboard(&self, item: RawClipboardItem) {
+        self.platform.write_raw_to_clipboard(item);
+    }
+
+    /// Read raw platform entries from the simulated clipboard.
+    pub fn read_raw_from_clipboard(&self) -> Option<RawClipboardItem> {
+        self.platform.read_raw_from_clipboard()
+    }
+
+    /// Asynchronously read raw platform entries from the simulated clipboard.
+    pub fn read_raw_clipboard(&self) -> Task<Result<Option<RawClipboardItem>>> {
+        self.platform.read_raw_clipboard()
     }
 
     /// Get URLs that have been opened via `cx.open_url()`.

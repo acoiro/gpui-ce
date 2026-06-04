@@ -16,7 +16,8 @@ use strum::IntoEnumIterator as _;
 
 use super::ns_string;
 use gpui::{
-    ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, Image, ImageFormat, hash,
+    ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, Image, ImageFormat,
+    RawClipboardEntry, RawClipboardItem, hash,
 };
 
 pub struct Pasteboard {
@@ -87,6 +88,33 @@ impl Pasteboard {
         }
 
         None
+    }
+
+    pub fn read_raw(&self) -> Option<RawClipboardItem> {
+        unsafe {
+            let pasteboard_types: id = self.inner.types();
+            if pasteboard_types == nil {
+                return None;
+            }
+
+            let mut entries = Vec::new();
+            for pasteboard_type in pasteboard_types.iter() {
+                let type_name = NSString::UTF8String(pasteboard_type);
+                if type_name.is_null() {
+                    continue;
+                }
+
+                let format = CStr::from_ptr(type_name).to_string_lossy().into_owned();
+                if let Some(bytes) = self.data_for_type(pasteboard_type) {
+                    entries.push(RawClipboardEntry {
+                        format,
+                        bytes: bytes.to_vec(),
+                    });
+                }
+            }
+
+            (!entries.is_empty()).then_some(RawClipboardItem { entries })
+        }
     }
 
     fn read_image(&self, format: ImageFormat) -> Option<ClipboardItem> {

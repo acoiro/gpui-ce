@@ -307,6 +307,20 @@ pub trait Platform: 'static {
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn write_to_clipboard(&self, item: ClipboardItem);
+    fn read_raw_from_clipboard(&self) -> Option<RawClipboardItem> {
+        self.read_from_clipboard()
+            .map(|item| RawClipboardItem::from_clipboard_item(&item))
+    }
+    fn read_clipboard(&self) -> Task<Result<Option<ClipboardItem>>> {
+        Task::ready(Ok(self.read_from_clipboard()))
+    }
+    fn read_raw_clipboard(&self) -> Task<Result<Option<RawClipboardItem>>> {
+        Task::ready(Ok(self.read_raw_from_clipboard()))
+    }
+    fn write_clipboard(&self, item: ClipboardItem) -> Task<Result<()>> {
+        self.write_to_clipboard(item);
+        Task::ready(Ok(()))
+    }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn read_from_primary(&self) -> Option<ClipboardItem>;
@@ -1878,6 +1892,22 @@ pub enum CursorStyle {
     Custom(CustomCursorId),
 }
 
+/// A clipboard item with every platform-native representation exposed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RawClipboardItem {
+    /// The platform-native entries in this clipboard item.
+    pub entries: Vec<RawClipboardEntry>,
+}
+
+/// A platform-native clipboard entry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RawClipboardEntry {
+    /// The platform format name, MIME type, UTI, or registered clipboard format.
+    pub format: String,
+    /// The raw bytes associated with the platform format.
+    pub bytes: Vec<u8>,
+}
+
 /// A clipboard item that should be copied to the clipboard
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClipboardItem {
@@ -1978,6 +2008,43 @@ impl ClipboardItem {
     /// Get owned versions of the item's entries
     pub fn into_entries(self) -> impl Iterator<Item = ClipboardEntry> {
         self.entries.into_iter()
+    }
+}
+
+impl RawClipboardItem {
+    /// Builds a lossy raw view from the existing high-level clipboard item.
+    pub fn from_clipboard_item(item: &ClipboardItem) -> Self {
+        let mut entries = Vec::new();
+
+        for entry in item.entries() {
+            match entry {
+                ClipboardEntry::String(string) => entries.push(RawClipboardEntry {
+                    format: "text/plain".to_string(),
+                    bytes: string.text().as_bytes().to_vec(),
+                }),
+                ClipboardEntry::Image(image) => entries.push(RawClipboardEntry {
+                    format: image.format.mime_type().to_string(),
+                    bytes: image.bytes.clone(),
+                }),
+                ClipboardEntry::ExternalPaths(paths) => {
+                    let mut text = String::new();
+
+                    for path in &paths.0 {
+                        if !text.is_empty() {
+                            text.push('\n');
+                        }
+                        text.push_str(&path.display().to_string());
+                    }
+
+                    entries.push(RawClipboardEntry {
+                        format: "text/plain".to_string(),
+                        bytes: text.into_bytes(),
+                    });
+                }
+            }
+        }
+
+        Self { entries }
     }
 }
 

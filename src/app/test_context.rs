@@ -3,7 +3,7 @@ use crate::{
     BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
     Element, Empty, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
+    Platform, Point, RawClipboardItem, Render, Result, Size, Task, TestDispatcher, TestPlatform,
     TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
     WindowHandle, WindowOptions, app::GpuiMode, window::ElementArenaScope,
 };
@@ -323,6 +323,31 @@ impl TestAppContext {
     /// This will return the most recent value from `write_to_clipboard`.
     pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.test_platform.read_from_clipboard()
+    }
+
+    /// Asynchronously simulates writing to the platform clipboard.
+    pub fn write_clipboard(&self, item: ClipboardItem) -> Task<Result<()>> {
+        self.test_platform.write_clipboard(item)
+    }
+
+    /// Asynchronously simulates reading from the platform clipboard.
+    pub fn read_clipboard(&self) -> Task<Result<Option<ClipboardItem>>> {
+        self.test_platform.read_clipboard()
+    }
+
+    /// Simulates writing raw platform entries to the clipboard.
+    pub fn write_raw_to_clipboard(&self, item: RawClipboardItem) {
+        self.test_platform.write_raw_to_clipboard(item)
+    }
+
+    /// Simulates reading raw platform entries from the clipboard.
+    pub fn read_raw_from_clipboard(&self) -> Option<RawClipboardItem> {
+        self.test_platform.read_raw_from_clipboard()
+    }
+
+    /// Asynchronously simulates reading raw platform entries from the clipboard.
+    pub fn read_raw_clipboard(&self) -> Task<Result<Option<RawClipboardItem>>> {
+        self.test_platform.read_raw_clipboard()
     }
 
     /// Simulates choosing a File in the platform's "Open" dialog.

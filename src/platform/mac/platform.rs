@@ -32,8 +32,8 @@ use gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, CustomCursor,
     CustomCursorId, ForegroundExecutor, KeyContext, Keymap, Menu, MenuItem, OsMenu, OwnedMenu,
     PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformWindow, Result, SystemMenuType, Task, ThermalState,
-    WindowAppearance, WindowParams,
+    PlatformTextSystem, PlatformWindow, RawClipboardItem, Result, SystemMenuType, Task,
+    ThermalState, WindowAppearance, WindowParams,
 };
 use itertools::Itertools;
 use objc::{
@@ -1106,6 +1106,11 @@ impl Platform for MacPlatform {
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         let state = self.0.lock();
         state.general_pasteboard.read()
+    }
+
+    fn read_raw_from_clipboard(&self) -> Option<RawClipboardItem> {
+        let state = self.0.lock();
+        state.general_pasteboard.read_raw()
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {

@@ -2,8 +2,8 @@ use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AssetSource, BackgroundExecutor,
     Bounds, ClipboardItem, Context, Entity, ForegroundExecutor, Global, InputEvent, Keystroke,
     Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform, Point,
-    Render, Result, Size, Task, TestDispatcher, TextSystem, VisualTestPlatform, Window,
-    WindowBounds, WindowHandle, WindowOptions, app::GpuiMode,
+    RawClipboardItem, Render, Result, Size, Task, TestDispatcher, TextSystem, VisualTestPlatform,
+    Window, WindowBounds, WindowHandle, WindowOptions, app::GpuiMode,
 };
 use anyhow::anyhow;
 use image::RgbaImage;
@@ -347,6 +347,26 @@ impl VisualTestAppContext {
     /// Reads from the clipboard.
     pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.platform.read_from_clipboard()
+    }
+
+    /// Asynchronously writes to the clipboard.
+    pub fn write_clipboard(&self, item: ClipboardItem) -> Task<Result<()>> {
+        self.platform.write_clipboard(item)
+    }
+
+    /// Asynchronously reads from the clipboard.
+    pub fn read_clipboard(&self) -> Task<Result<Option<ClipboardItem>>> {
+        self.platform.read_clipboard()
+    }
+
+    /// Reads raw platform entries from the clipboard.
+    pub fn read_raw_from_clipboard(&self) -> Option<RawClipboardItem> {
+        self.platform.read_raw_from_clipboard()
+    }
+
+    /// Asynchronously reads raw platform entries from the clipboard.
+    pub fn read_raw_clipboard(&self) -> Task<Result<Option<RawClipboardItem>>> {
+        self.platform.read_raw_clipboard()
     }
 
     /// Waits for a condition to become true, with a timeout.

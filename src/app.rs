@@ -1197,6 +1197,21 @@ impl App {
         self.platform.read_from_clipboard()
     }
 
+    /// Reads every available platform clipboard representation.
+    pub fn read_raw_from_clipboard(&self) -> Option<crate::RawClipboardItem> {
+        self.platform.read_raw_from_clipboard()
+    }
+
+    /// Asynchronously reads data from the platform clipboard.
+    pub fn read_clipboard(&self) -> Task<Result<Option<ClipboardItem>>> {
+        self.platform.read_clipboard()
+    }
+
+    /// Asynchronously reads every available platform clipboard representation.
+    pub fn read_raw_clipboard(&self) -> Task<Result<Option<crate::RawClipboardItem>>> {
+        self.platform.read_raw_clipboard()
+    }
+
     /// Sets the text rendering mode for the application.
     pub fn set_text_rendering_mode(&mut self, mode: TextRenderingMode) {
         self.text_rendering_mode.set(mode);
@@ -1210,6 +1225,11 @@ impl App {
     /// Writes data to the platform clipboard.
     pub fn write_to_clipboard(&self, item: ClipboardItem) {
         self.platform.write_to_clipboard(item)
+    }
+
+    /// Asynchronously writes data to the platform clipboard.
+    pub fn write_clipboard(&self, item: ClipboardItem) -> Task<Result<()>> {
+        self.platform.write_clipboard(item)
     }
 
     /// Reads data from the primary selection buffer.

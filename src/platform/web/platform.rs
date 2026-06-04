@@ -1,3 +1,4 @@
+use super::clipboard;
 use super::dispatcher::WebDispatcher;
 use super::display::WebDisplay;
 use super::keyboard::WebKeyboardLayout;
@@ -9,7 +10,8 @@ use gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, CustomCursor,
     CustomCursorId, DummyKeyboardMapper, ForegroundExecutor, Keymap, Menu, MenuItem,
     PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformWindow, Task, ThermalState, WindowAppearance, WindowParams,
+    PlatformTextSystem, PlatformWindow, RawClipboardItem, Task, ThermalState, WindowAppearance,
+    WindowParams,
 };
 use std::{
     borrow::Cow,
@@ -383,6 +385,27 @@ impl Platform for WebPlatform {
     }
 
     fn write_to_clipboard(&self, _item: ClipboardItem) {}
+
+    fn read_clipboard(&self) -> Task<Result<Option<ClipboardItem>>> {
+        match clipboard::read(self.browser_window.clone()) {
+            Ok(read) => self.foreground_executor.spawn(read),
+            Err(error) => Task::ready(Err(error)),
+        }
+    }
+
+    fn read_raw_clipboard(&self) -> Task<Result<Option<RawClipboardItem>>> {
+        match clipboard::read_raw(self.browser_window.clone()) {
+            Ok(read) => self.foreground_executor.spawn(read),
+            Err(error) => Task::ready(Err(error)),
+        }
+    }
+
+    fn write_clipboard(&self, item: ClipboardItem) -> Task<Result<()>> {
+        match clipboard::write(self.browser_window.clone(), item) {
+            Ok(write) => self.foreground_executor.spawn(write),
+            Err(error) => Task::ready(Err(error)),
+        }
+    }
 
     fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Task<Result<()>> {
         Task::ready(Err(anyhow::anyhow!(

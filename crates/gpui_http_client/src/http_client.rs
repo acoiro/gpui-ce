@@ -333,19 +333,19 @@ pub fn read_proxy_from_env() -> Option<Url> {
     }
     #[cfg(not(target_family = "wasm"))]
     {
-    const ENV_VARS: &[&str] = &[
-        "ALL_PROXY",
-        "all_proxy",
-        "HTTPS_PROXY",
-        "https_proxy",
-        "HTTP_PROXY",
-        "http_proxy",
-    ];
+        const ENV_VARS: &[&str] = &[
+            "ALL_PROXY",
+            "all_proxy",
+            "HTTPS_PROXY",
+            "https_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+        ];
 
-    ENV_VARS
-        .iter()
-        .find_map(|var| std::env::var(var).ok())
-        .and_then(|env| env.parse().ok())
+        ENV_VARS
+            .iter()
+            .find_map(|var| std::env::var(var).ok())
+            .and_then(|env| env.parse().ok())
     }
 }
 
@@ -356,9 +356,9 @@ pub fn read_no_proxy_from_env() -> Option<String> {
     }
     #[cfg(not(target_family = "wasm"))]
     {
-    const ENV_VARS: &[&str] = &["NO_PROXY", "no_proxy"];
+        const ENV_VARS: &[&str] = &["NO_PROXY", "no_proxy"];
 
-    ENV_VARS.iter().find_map(|var| std::env::var(var).ok())
+        ENV_VARS.iter().find_map(|var| std::env::var(var).ok())
     }
 }
 

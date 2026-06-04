@@ -356,7 +356,7 @@ impl BackgroundExecutor {
         }
         #[cfg(not(target_family = "wasm"))]
         {
-        num_cpus::get()
+            num_cpus::get()
         }
     }
 

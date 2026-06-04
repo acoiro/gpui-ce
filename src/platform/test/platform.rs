@@ -2,8 +2,9 @@ use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
     DummyKeyboardMapper, ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay,
     PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata,
-    Task, TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowParams, size,
+    PromptButton, RawClipboardItem, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
+    SourceMetadata, Task, TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowParams,
+    size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -25,6 +26,7 @@ pub(crate) struct TestPlatform {
     active_display: Rc<dyn PlatformDisplay>,
     active_cursor: Mutex<CursorStyle>,
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
+    current_raw_clipboard_item: Mutex<Option<RawClipboardItem>>,
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     current_primary_item: Mutex<Option<ClipboardItem>>,
     #[cfg(target_os = "macos")]
@@ -123,6 +125,7 @@ impl TestPlatform {
             active_window: Default::default(),
             expect_restart: Default::default(),
             current_clipboard_item: Mutex::new(None),
+            current_raw_clipboard_item: Mutex::new(None),
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             current_primary_item: Mutex::new(None),
             #[cfg(target_os = "macos")]
@@ -145,6 +148,10 @@ impl TestPlatform {
             .pop_front()
             .expect("no pending new path prompt");
         tx.send(Ok(select_path(&path))).ok();
+    }
+
+    pub fn write_raw_to_clipboard(&self, item: RawClipboardItem) {
+        *self.current_raw_clipboard_item.lock() = Some(item);
     }
 
     #[track_caller]
@@ -411,8 +418,18 @@ impl Platform for TestPlatform {
         self.current_clipboard_item.lock().clone()
     }
 
+    fn read_raw_from_clipboard(&self) -> Option<RawClipboardItem> {
+        self.current_raw_clipboard_item.lock().clone().or_else(|| {
+            self.current_clipboard_item
+                .lock()
+                .as_ref()
+                .map(RawClipboardItem::from_clipboard_item)
+        })
+    }
+
     fn write_to_clipboard(&self, item: ClipboardItem) {
         *self.current_clipboard_item.lock() = Some(item);
+        *self.current_raw_clipboard_item.lock() = None;
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
