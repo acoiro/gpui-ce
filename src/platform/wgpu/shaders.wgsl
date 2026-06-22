@@ -135,8 +135,9 @@ struct Background {
     // 2u is PatternSlash
     // 3u is Checkerboard
     tag: u32,
-    // 0u is sRGB linear color
+    // 0u is sRGB color
     // 1u is Oklab color
+    // 2u is Display P3 color
     color_space: u32,
     solid: Hsla,
     gradient_angle_or_pattern_height: f32,
@@ -235,6 +236,16 @@ fn linear_to_srgba(color: vec4<f32>) -> vec4<f32> {
 /// Convert a sRGBA color to linear space.
 fn srgba_to_linear(color: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(srgb_to_linear(color.rgb), color.a);
+}
+
+fn display_p3_to_linear_srgb(color: vec4<f32>) -> vec4<f32> {
+    let linear_p3 = srgb_to_linear(color.rgb);
+    let linear_srgb = vec3<f32>(
+        1.2247450 * linear_p3.r - 0.2249046 * linear_p3.g + 0.0000000 * linear_p3.b,
+        -0.0420578 * linear_p3.r + 1.0420811 * linear_p3.g - 0.0000000 * linear_p3.b,
+        -0.0196423 * linear_p3.r - 0.0786549 * linear_p3.g + 1.0985372 * linear_p3.b,
+    );
+    return vec4<f32>(clamp(linear_srgb, vec3<f32>(0.0), vec3<f32>(1.0)), color.a);
 }
 
 /// Hsla to linear RGBA conversion.
@@ -406,6 +417,9 @@ fn prepare_gradient_color(tag: u32, color_space: u32,
 
     if (tag == 0u || tag == 2u || tag == 3u) {
         result.solid = hsla_to_rgba(solid);
+        if (color_space == 2u) {
+            result.solid = display_p3_to_linear_srgb(result.solid);
+        }
     } else if (tag == 1u) {
         // The hsla_to_rgba is returns a linear sRGB color
         result.color0 = hsla_to_rgba(colors[0].color);
@@ -474,6 +488,9 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
                 case 1u: {
                     let oklab_color = mix(color0, color1, t);
                     background_color = oklab_to_linear_srgb(oklab_color);
+                }
+                case 2u: {
+                    background_color = display_p3_to_linear_srgb(mix(color0, color1, t));
                 }
             }
         }

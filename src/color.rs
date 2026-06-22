@@ -674,6 +674,8 @@ pub enum ColorSpace {
     Srgb = 0,
     /// The Oklab color space.
     Oklab = 1,
+    /// The Display P3 color space.
+    DisplayP3 = 2,
 }
 
 impl Display for ColorSpace {
@@ -681,6 +683,7 @@ impl Display for ColorSpace {
         match self {
             ColorSpace::Srgb => write!(f, "sRGB"),
             ColorSpace::Oklab => write!(f, "Oklab"),
+            ColorSpace::DisplayP3 => write!(f, "Display P3"),
         }
     }
 }
@@ -767,6 +770,15 @@ pub fn solid_background(color: impl Into<Hsla>) -> Background {
     }
 }
 
+/// Creates a solid Display P3 background color.
+pub fn display_p3_background(color: impl Into<Hsla>) -> Background {
+    Background {
+        solid: color.into(),
+        color_space: ColorSpace::DisplayP3,
+        ..Default::default()
+    }
+}
+
 /// Creates a LinearGradient background color.
 ///
 /// The gradient line's angle of direction. A value of `0.` is equivalent to top; increasing values rotate clockwise from there.
@@ -785,6 +797,15 @@ pub fn linear_gradient(
         colors: [from.into(), to.into()],
         ..Default::default()
     }
+}
+
+/// Creates a Display P3 linear gradient background color.
+pub fn display_p3_linear_gradient(
+    angle: f32,
+    from: impl Into<LinearColorStop>,
+    to: impl Into<LinearColorStop>,
+) -> Background {
+    linear_gradient(angle, from, to).color_space(ColorSpace::DisplayP3)
 }
 
 /// A color stop in a linear gradient.

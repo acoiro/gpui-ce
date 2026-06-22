@@ -3,9 +3,11 @@
 
 using namespace metal;
 
+float4 hsla_to_raw_rgba(Hsla hsla);
 float4 hsla_to_rgba(Hsla hsla);
 float3 srgb_to_linear(float3 color);
 float3 linear_to_srgb(float3 color);
+float4 srgb_to_display_p3(float4 color);
 float4 srgb_to_oklab(float4 color);
 float4 oklab_to_srgb(float4 color);
 float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
@@ -715,7 +717,7 @@ fragment float4 polychrome_sprite_fragment(
     color.b = grayscale;
   }
   color.a *= sprite.opacity * saturate(0.5 - distance);
-  return color;
+  return srgb_to_display_p3(color);
 }
 
 struct PathRasterizationVertexOutput {
@@ -883,10 +885,10 @@ fragment float4 surface_fragment(SurfaceFragmentInput input [[stage_in]],
       y_texture.sample(texture_sampler, input.texture_position).r,
       cb_cr_texture.sample(texture_sampler, input.texture_position).rg, 1.0);
 
-  return ycbcrToRGBTransform * ycbcr;
+  return srgb_to_display_p3(ycbcrToRGBTransform * ycbcr);
 }
 
-float4 hsla_to_rgba(Hsla hsla) {
+float4 hsla_to_raw_rgba(Hsla hsla) {
   float h = hsla.h * 6.0; // Now, it's an angle but scaled in [0, 6) range
   float s = hsla.s;
   float l = hsla.l;
@@ -934,12 +936,26 @@ float4 hsla_to_rgba(Hsla hsla) {
   return rgba;
 }
 
+float4 hsla_to_rgba(Hsla hsla) {
+  return srgb_to_display_p3(hsla_to_raw_rgba(hsla));
+}
+
 float3 srgb_to_linear(float3 color) {
   return pow(color, float3(2.2));
 }
 
 float3 linear_to_srgb(float3 color) {
   return pow(color, float3(1.0 / 2.2));
+}
+
+float4 srgb_to_display_p3(float4 color) {
+  float3 linear_srgb = srgb_to_linear(color.rgb);
+  float3 linear_p3 = float3(
+    0.8225927 * linear_srgb.r + 0.1775340 * linear_srgb.g + 0.0000000 * linear_srgb.b,
+    0.0331996 * linear_srgb.r + 0.9667835 * linear_srgb.g + 0.0000000 * linear_srgb.b,
+    0.0170853 * linear_srgb.r + 0.0723957 * linear_srgb.g + 0.9103014 * linear_srgb.b
+  );
+  return float4(linear_to_srgb(clamp(linear_p3, 0.0, 1.0)), color.a);
 }
 
 // Converts a sRGB color to the Oklab color space.
@@ -1141,10 +1157,13 @@ GradientColor prepare_fill_color(uint tag, uint color_space, Hsla solid,
                                      Hsla color0, Hsla color1) {
   GradientColor out;
   if (tag == 0 || tag == 2 || tag == 3) {
-    out.solid = hsla_to_rgba(solid);
+    out.solid = hsla_to_raw_rgba(solid);
+    if (color_space != 2) {
+      out.solid = srgb_to_display_p3(out.solid);
+    }
   } else if (tag == 1) {
-    out.color0 = hsla_to_rgba(color0);
-    out.color1 = hsla_to_rgba(color1);
+    out.color0 = hsla_to_raw_rgba(color0);
+    out.color1 = hsla_to_raw_rgba(color1);
 
     // Prepare color space in vertex for avoid conversion
     // in fragment shader for performance reasons
@@ -1207,13 +1226,16 @@ float4 fill_color(Background background,
 
       switch (background.color_space) {
         case 0:
-          color = mix(color0, color1, t);
+          color = srgb_to_display_p3(mix(color0, color1, t));
           break;
         case 1: {
           float4 oklab_color = mix(color0, color1, t);
-          color = oklab_to_srgb(oklab_color);
+          color = srgb_to_display_p3(oklab_to_srgb(oklab_color));
           break;
         }
+        case 2:
+          color = mix(color0, color1, t);
+          break;
       }
       break;
     }

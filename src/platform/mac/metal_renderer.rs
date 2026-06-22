@@ -15,6 +15,7 @@ use gpui::{
 use image::RgbaImage;
 
 use core_foundation::base::TCFType;
+use core_graphics::color_space::{CGColorSpace, kCGColorSpaceDisplayP3};
 use core_video::{
     metal_texture::CVMetalTextureGetTexture, metal_texture_cache::CVMetalTextureCache,
     pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
@@ -151,6 +152,12 @@ impl MetalRenderer {
         let layer = metal::MetalLayer::new();
         layer.set_device(&device);
         layer.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+        if let Some(color_space) = unsafe { CGColorSpace::create_with_name(kCGColorSpaceDisplayP3) }
+        {
+            unsafe {
+                let _: () = msg_send![&*layer, setColorspace: color_space.as_ptr()];
+            }
+        }
         // Support direct-to-display rendering if the window is not transparent
         // https://developer.apple.com/documentation/metal/managing-your-game-window-for-metal-in-macos
         layer.set_opaque(!transparent);
