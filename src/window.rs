@@ -16,9 +16,9 @@ use crate::{
     ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
     SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
     TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, rems, size, transparent_black,
+    TooltipPlacement, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
+    WindowParams, WindowTextSystem, point, prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -2403,15 +2403,36 @@ impl Window {
             let mouse_position = tooltip_request.tooltip.mouse_position;
             let tooltip_size = element.layout_as_root(AvailableSpace::min_size(), self, cx);
 
-            let mut tooltip_bounds =
-                Bounds::new(mouse_position + point(px(1.), px(1.)), tooltip_size);
             let window_bounds = Bounds {
                 origin: Point::default(),
                 size: self.viewport_size(),
             };
+            let mut tooltip_bounds = match (
+                tooltip_request.tooltip.placement,
+                tooltip_request.tooltip.anchor_bounds,
+            ) {
+                (TooltipPlacement::AboveAnchor, Some(anchor_bounds)) => Bounds::new(
+                    point(
+                        anchor_bounds.origin.x
+                            + (anchor_bounds.size.width - tooltip_size.width) / 2.,
+                        anchor_bounds.origin.y - tooltip_size.height - px(4.),
+                    ),
+                    tooltip_size,
+                ),
+                _ => Bounds::new(mouse_position + point(px(1.), px(1.)), tooltip_size),
+            };
 
-            if tooltip_bounds.right() > window_bounds.right() {
-                let new_x = mouse_position.x - tooltip_bounds.size.width - px(1.);
+            if tooltip_bounds.left() < window_bounds.left() {
+                tooltip_bounds.origin.x = window_bounds.left();
+            } else if tooltip_bounds.right() > window_bounds.right() {
+                let new_x = match tooltip_request.tooltip.placement {
+                    TooltipPlacement::Cursor => {
+                        mouse_position.x - tooltip_bounds.size.width - px(1.)
+                    }
+                    TooltipPlacement::AboveAnchor => {
+                        window_bounds.right() - tooltip_bounds.size.width
+                    }
+                };
                 if new_x >= Pixels::ZERO {
                     tooltip_bounds.origin.x = new_x;
                 } else {
@@ -2422,7 +2443,9 @@ impl Window {
                 }
             }
 
-            if tooltip_bounds.bottom() > window_bounds.bottom() {
+            if tooltip_bounds.top() < window_bounds.top() {
+                tooltip_bounds.origin.y = window_bounds.top();
+            } else if tooltip_bounds.bottom() > window_bounds.bottom() {
                 let new_y = mouse_position.y - tooltip_bounds.size.height - px(1.);
                 if new_y >= Pixels::ZERO {
                     tooltip_bounds.origin.y = new_y;
