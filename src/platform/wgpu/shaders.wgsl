@@ -80,7 +80,7 @@ fn apply_contrast_and_gamma_correction3(sample: vec3<f32>, color: vec3<f32>, enh
 struct GlobalParams {
     viewport_size: vec2<f32>,
     premultiplied_alpha: u32,
-    pad: u32,
+    output_color_space: u32,
 }
 
 struct GammaParams {
@@ -246,6 +246,37 @@ fn display_p3_to_linear_srgb(color: vec4<f32>) -> vec4<f32> {
         -0.0196423 * linear_p3.r - 0.0786549 * linear_p3.g + 1.0985372 * linear_p3.b,
     );
     return vec4<f32>(clamp(linear_srgb, vec3<f32>(0.0), vec3<f32>(1.0)), color.a);
+}
+
+fn srgb_to_display_p3(color: vec4<f32>) -> vec4<f32> {
+    let linear_srgb = srgb_to_linear(color.rgb);
+    let linear_p3 = vec3<f32>(
+        0.8225927 * linear_srgb.r + 0.1775340 * linear_srgb.g + 0.0000000 * linear_srgb.b,
+        0.0331996 * linear_srgb.r + 0.9667835 * linear_srgb.g + 0.0000000 * linear_srgb.b,
+        0.0170853 * linear_srgb.r + 0.0723957 * linear_srgb.g + 0.9103014 * linear_srgb.b,
+    );
+    return vec4<f32>(linear_to_srgb(clamp(linear_p3, vec3<f32>(0.0), vec3<f32>(1.0))), color.a);
+}
+
+fn srgb_to_output_color(color: vec4<f32>) -> vec4<f32> {
+    if (globals.output_color_space == 1u) {
+        return srgb_to_display_p3(color);
+    }
+    return color;
+}
+
+fn display_p3_to_output_color(color: vec4<f32>) -> vec4<f32> {
+    if (globals.output_color_space == 1u) {
+        return color;
+    }
+    return display_p3_to_linear_srgb(color);
+}
+
+fn linear_srgb_to_output_color(color: vec4<f32>) -> vec4<f32> {
+    if (globals.output_color_space == 1u) {
+        return srgb_to_display_p3(linear_to_srgba(color));
+    }
+    return color;
 }
 
 /// Hsla to linear RGBA conversion.
@@ -418,7 +449,9 @@ fn prepare_gradient_color(tag: u32, color_space: u32,
     if (tag == 0u || tag == 2u || tag == 3u) {
         result.solid = hsla_to_rgba(solid);
         if (color_space == 2u) {
-            result.solid = display_p3_to_linear_srgb(result.solid);
+            result.solid = display_p3_to_output_color(result.solid);
+        } else {
+            result.solid = srgb_to_output_color(result.solid);
         }
     } else if (tag == 1u) {
         // The hsla_to_rgba is returns a linear sRGB color
@@ -483,14 +516,19 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
 
             switch (background.color_space) {
                 default: {
-                    background_color = srgba_to_linear(mix(color0, color1, t));
+                    let srgb_color = mix(color0, color1, t);
+                    if (globals.output_color_space == 1u) {
+                        background_color = srgb_to_display_p3(srgb_color);
+                    } else {
+                        background_color = srgba_to_linear(srgb_color);
+                    }
                 }
                 case 1u: {
                     let oklab_color = mix(color0, color1, t);
-                    background_color = oklab_to_linear_srgb(oklab_color);
+                    background_color = linear_srgb_to_output_color(oklab_to_linear_srgb(oklab_color));
                 }
                 case 2u: {
-                    background_color = display_p3_to_linear_srgb(mix(color0, color1, t));
+                    background_color = display_p3_to_output_color(mix(color0, color1, t));
                 }
             }
         }
@@ -572,7 +610,7 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     out.background_solid = gradient.solid;
     out.background_color0 = gradient.color0;
     out.background_color1 = gradient.color1;
-    out.border_color = hsla_to_rgba(quad.border_color);
+    out.border_color = srgb_to_output_color(hsla_to_rgba(quad.border_color));
     out.quad_id = instance_id;
     out.clip_distances = distance_from_clip_rect(unit_vertex, quad.bounds, quad.content_mask);
     return out;
@@ -995,7 +1033,7 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) ins
 
     var out = ShadowVarying();
     out.position = to_device_position(unit_vertex, shadow.bounds);
-    out.color = hsla_to_rgba(shadow.color);
+    out.color = srgb_to_output_color(hsla_to_rgba(shadow.color));
     out.shadow_id = instance_id;
     out.clip_distances = distance_from_clip_rect(unit_vertex, shadow.bounds, shadow.content_mask);
     return out;
@@ -1162,7 +1200,7 @@ fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) 
 
     var out = UnderlineVarying();
     out.position = to_device_position(unit_vertex, underline.bounds);
-    out.color = hsla_to_rgba(underline.color);
+    out.color = srgb_to_output_color(hsla_to_rgba(underline.color));
     out.underline_id = instance_id;
     out.clip_distances = distance_from_clip_rect(unit_vertex, underline.bounds, underline.content_mask);
     return out;
@@ -1229,7 +1267,7 @@ fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
     out.position = to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
 
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
-    out.color = hsla_to_rgba(sprite.color);
+    out.color = srgb_to_output_color(hsla_to_rgba(sprite.color));
     out.clip_distances = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
     return out;
 }
@@ -1297,7 +1335,7 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
         let grayscale = dot(color.rgb, GRAYSCALE_FACTORS);
         color = vec4<f32>(vec3<f32>(grayscale), sample.a);
     }
-    return blend_color(color, sprite.opacity * saturate(0.5 - distance));
+    return blend_color(srgb_to_output_color(color), sprite.opacity * saturate(0.5 - distance));
 }
 
 // --- surfaces --- //
@@ -1348,5 +1386,5 @@ fn fs_surface(input: SurfaceVarying) -> @location(0) vec4<f32> {
         textureSampleLevel(t_cb_cr, s_surface, input.texture_position, 0.0).rg,
         1.0);
 
-    return ycbcr_to_RGB * y_cb_cr;
+    return srgb_to_output_color(ycbcr_to_RGB * y_cb_cr);
 }

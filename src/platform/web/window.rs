@@ -3,7 +3,7 @@ use super::events::{ClickState, WebEventListeners, is_mac_platform};
 use std::sync::Arc;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
 
-use crate::platform::wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
+use crate::platform::wgpu::{WgpuContext, WgpuOutputColorSpace, WgpuRenderer, WgpuSurfaceConfig};
 use gpui::{
     AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult, GpuSpecs,
     Modifiers, MouseButton, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
@@ -155,6 +155,7 @@ impl WebWindow {
         let renderer_config = WgpuSurfaceConfig {
             size: device_size,
             transparent: true,
+            output_color_space: browser_output_color_space(&browser_window),
         };
 
         let renderer = WgpuRenderer::new_from_canvas(context, &canvas, renderer_config)?;
@@ -452,6 +453,19 @@ fn current_appearance(browser_window: &web_sys::Window) -> WindowAppearance {
         WindowAppearance::Dark
     } else {
         WindowAppearance::Light
+    }
+}
+
+fn browser_output_color_space(browser_window: &web_sys::Window) -> WgpuOutputColorSpace {
+    if browser_window
+        .match_media("(color-gamut: p3)")
+        .ok()
+        .flatten()
+        .is_some_and(|media_query| media_query.matches())
+    {
+        WgpuOutputColorSpace::DisplayP3
+    } else {
+        WgpuOutputColorSpace::Srgb
     }
 }
 

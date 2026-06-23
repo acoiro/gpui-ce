@@ -12,13 +12,15 @@ use std::cell::RefCell;
 use std::num::NonZeroU64;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+#[cfg(target_family = "wasm")]
+use wasm_bindgen::JsCast;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GlobalParams {
     viewport_size: [f32; 2],
     premultiplied_alpha: u32,
-    pad: u32,
+    output_color_space: u32,
 }
 
 #[repr(C)]
@@ -71,6 +73,86 @@ struct PathRasterizationVertex {
 pub struct WgpuSurfaceConfig {
     pub size: Size<DevicePixels>,
     pub transparent: bool,
+    pub output_color_space: WgpuOutputColorSpace,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WgpuOutputColorSpace {
+    #[default]
+    Srgb,
+    DisplayP3,
+}
+
+impl WgpuOutputColorSpace {
+    fn shader_value(self) -> u32 {
+        match self {
+            Self::Srgb => 0,
+            Self::DisplayP3 => 1,
+        }
+    }
+}
+
+#[cfg(target_family = "wasm")]
+fn configure_web_canvas_output_color_space(
+    canvas: &web_sys::HtmlCanvasElement,
+    requested: WgpuOutputColorSpace,
+) -> WgpuOutputColorSpace {
+    if requested != WgpuOutputColorSpace::DisplayP3 {
+        return WgpuOutputColorSpace::Srgb;
+    }
+
+    let Some(context) = canvas.get_context("webgpu").ok().flatten() else {
+        return WgpuOutputColorSpace::Srgb;
+    };
+    let Ok(get_configuration) = js_sys::Reflect::get(
+        &context,
+        &wasm_bindgen::JsValue::from_str("getConfiguration"),
+    )
+    .and_then(|value| value.dyn_into::<js_sys::Function>()) else {
+        return WgpuOutputColorSpace::Srgb;
+    };
+    let Ok(configuration) = get_configuration.call0(&context) else {
+        return WgpuOutputColorSpace::Srgb;
+    };
+    if configuration.is_null() || configuration.is_undefined() {
+        return WgpuOutputColorSpace::Srgb;
+    }
+
+    if js_sys::Reflect::set(
+        &configuration,
+        &wasm_bindgen::JsValue::from_str("colorSpace"),
+        &wasm_bindgen::JsValue::from_str("display-p3"),
+    )
+    .is_err()
+    {
+        return WgpuOutputColorSpace::Srgb;
+    }
+
+    let Ok(configure) =
+        js_sys::Reflect::get(&context, &wasm_bindgen::JsValue::from_str("configure"))
+            .and_then(|value| value.dyn_into::<js_sys::Function>())
+    else {
+        return WgpuOutputColorSpace::Srgb;
+    };
+    if configure.call1(&context, &configuration).is_err() {
+        return WgpuOutputColorSpace::Srgb;
+    }
+
+    let Ok(applied_configuration) = get_configuration.call0(&context) else {
+        return WgpuOutputColorSpace::Srgb;
+    };
+    let applied_color_space = js_sys::Reflect::get(
+        &applied_configuration,
+        &wasm_bindgen::JsValue::from_str("colorSpace"),
+    )
+    .ok()
+    .and_then(|value| value.as_string());
+
+    if applied_color_space.as_deref() == Some("display-p3") {
+        WgpuOutputColorSpace::DisplayP3
+    } else {
+        WgpuOutputColorSpace::Srgb
+    }
 }
 
 struct WgpuPipelines {
@@ -134,6 +216,10 @@ pub struct WgpuRenderer {
     adapter_info: wgpu::AdapterInfo,
     transparent_alpha_mode: wgpu::CompositeAlphaMode,
     opaque_alpha_mode: wgpu::CompositeAlphaMode,
+    output_color_space: WgpuOutputColorSpace,
+    requested_output_color_space: WgpuOutputColorSpace,
+    #[cfg(target_family = "wasm")]
+    web_canvas: Option<web_sys::HtmlCanvasElement>,
     max_texture_size: u32,
     last_error: Arc<Mutex<Option<String>>>,
     failed_frame_count: u32,
@@ -240,7 +326,10 @@ impl WgpuRenderer {
             Arc::clone(&context.queue),
         ));
 
-        Self::new_internal(None, context, surface, config, None, atlas)
+        let mut renderer = Self::new_internal(None, context, surface, config, None, atlas)?;
+        renderer.web_canvas = Some(canvas.clone());
+        renderer.apply_web_canvas_output_color_space();
+        Ok(renderer)
     }
 
     fn new_internal(
@@ -451,6 +540,8 @@ impl WgpuRenderer {
             path_msaa_view: None,
         };
 
+        let requested_output_color_space = config.output_color_space;
+
         Ok(Self {
             context: gpu_context,
             compositor_gpu,
@@ -467,11 +558,40 @@ impl WgpuRenderer {
             adapter_info,
             transparent_alpha_mode,
             opaque_alpha_mode,
+            output_color_space: requested_output_color_space,
+            requested_output_color_space,
+            #[cfg(target_family = "wasm")]
+            web_canvas: None,
             max_texture_size,
             last_error,
             failed_frame_count: 0,
             device_lost: context.device_lost_flag(),
         })
+    }
+
+    fn configure_surface(&mut self) {
+        let surface_config = self.surface_config.clone();
+        let resources = self.resources_mut();
+        resources
+            .surface
+            .configure(&resources.device, &surface_config);
+        self.apply_web_canvas_output_color_space();
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    fn apply_web_canvas_output_color_space(&mut self) {
+        self.output_color_space = self.requested_output_color_space;
+    }
+
+    #[cfg(target_family = "wasm")]
+    fn apply_web_canvas_output_color_space(&mut self) {
+        self.output_color_space = self
+            .web_canvas
+            .as_ref()
+            .map(|canvas| {
+                configure_web_canvas_output_color_space(canvas, self.requested_output_color_space)
+            })
+            .unwrap_or(WgpuOutputColorSpace::Srgb);
     }
 
     fn create_bind_group_layouts(device: &wgpu::Device) -> WgpuBindGroupLayouts {
@@ -921,37 +1041,35 @@ impl WgpuRenderer {
 
             self.surface_config.width = clamped_width.max(1);
             self.surface_config.height = clamped_height.max(1);
-            let surface_config = self.surface_config.clone();
+            {
+                let resources = self.resources_mut();
 
-            let resources = self.resources_mut();
+                // Wait for any in-flight GPU work to complete before destroying textures
+                if let Err(e) = resources.device.poll(wgpu::PollType::Wait {
+                    submission_index: None,
+                    timeout: None,
+                }) {
+                    warn!("Failed to poll device during resize: {e:?}");
+                }
 
-            // Wait for any in-flight GPU work to complete before destroying textures
-            if let Err(e) = resources.device.poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: None,
-            }) {
-                warn!("Failed to poll device during resize: {e:?}");
+                // Destroy old textures before allocating new ones to avoid GPU memory spikes
+                if let Some(ref texture) = resources.path_intermediate_texture {
+                    texture.destroy();
+                }
+                if let Some(ref texture) = resources.path_msaa_texture {
+                    texture.destroy();
+                }
+
+                // Invalidate intermediate textures - they will be lazily recreated
+                // in draw() after we confirm the surface is healthy. This avoids
+                // panics when the device/surface is in an invalid state during resize.
+                resources.path_intermediate_texture = None;
+                resources.path_intermediate_view = None;
+                resources.path_msaa_texture = None;
+                resources.path_msaa_view = None;
             }
 
-            // Destroy old textures before allocating new ones to avoid GPU memory spikes
-            if let Some(ref texture) = resources.path_intermediate_texture {
-                texture.destroy();
-            }
-            if let Some(ref texture) = resources.path_msaa_texture {
-                texture.destroy();
-            }
-
-            resources
-                .surface
-                .configure(&resources.device, &surface_config);
-
-            // Invalidate intermediate textures - they will be lazily recreated
-            // in draw() after we confirm the surface is healthy. This avoids
-            // panics when the device/surface is in an invalid state during resize.
-            resources.path_intermediate_texture = None;
-            resources.path_intermediate_view = None;
-            resources.path_msaa_texture = None;
-            resources.path_msaa_view = None;
+            self.configure_surface();
         }
     }
 
@@ -1061,19 +1179,11 @@ impl WgpuRenderer {
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
                 // Textures must be destroyed before the surface can be reconfigured.
                 drop(frame);
-                let surface_config = self.surface_config.clone();
-                let resources = self.resources_mut();
-                resources
-                    .surface
-                    .configure(&resources.device, &surface_config);
+                self.configure_surface();
                 return;
             }
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
-                let surface_config = self.surface_config.clone();
-                let resources = self.resources_mut();
-                resources
-                    .surface
-                    .configure(&resources.device, &surface_config);
+                self.configure_surface();
                 return;
             }
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
@@ -1112,7 +1222,7 @@ impl WgpuRenderer {
             } else {
                 0
             },
-            pad: 0,
+            output_color_space: self.output_color_space.shader_value(),
         };
 
         let path_globals = GlobalParams {
@@ -1686,6 +1796,7 @@ impl WgpuRenderer {
                 height: gpui::DevicePixels(self.surface_config.height as i32),
             },
             transparent: self.surface_config.alpha_mode != wgpu::CompositeAlphaMode::Opaque,
+            output_color_space: self.requested_output_color_space,
         };
         let gpu_context = Rc::clone(gpu_context);
         let ctx_ref = gpu_context.borrow();

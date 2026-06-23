@@ -29,7 +29,9 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
 use crate::platform::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
 use crate::platform::linux::{Globals, Output, WaylandClientStatePtr, get_window};
-use crate::platform::wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
+use crate::platform::wgpu::{
+    CompositorGpuHint, WgpuOutputColorSpace, WgpuRenderer, WgpuSurfaceConfig,
+};
 use gpui::{
     AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, GpuSpecs, Modifiers, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
@@ -343,6 +345,7 @@ impl WaylandWindowState {
                     height: DevicePixels(f32::from(options.bounds.size.height) as i32),
                 },
                 transparent: true,
+                output_color_space: WgpuOutputColorSpace::Srgb,
             };
             WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
         };
