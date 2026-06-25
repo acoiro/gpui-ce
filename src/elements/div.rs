@@ -47,7 +47,7 @@ use util::ResultExt;
 use super::ImageCacheProvider;
 
 const DRAG_THRESHOLD: f64 = 2.;
-const TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
+pub(crate) const TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
 const HOVERABLE_TOOLTIP_HIDE_DELAY: Duration = Duration::from_millis(500);
 
 /// The styling information for a given group.
@@ -624,15 +624,24 @@ impl Interactivity {
     where
         Self: Sized,
     {
-        debug_assert!(
-            self.tooltip_builder.is_none(),
-            "calling tooltip more than once on the same element is not supported"
+        self.tooltip_with_placement_and_delay(
+            TooltipPlacement::Cursor,
+            build_tooltip,
+            TOOLTIP_SHOW_DELAY,
         );
-        self.tooltip_builder = Some(TooltipBuilder {
-            build: Rc::new(build_tooltip),
-            hoverable: false,
-            placement: TooltipPlacement::Cursor,
-        });
+    }
+
+    /// Use the given callback to construct a new tooltip view when the mouse hovers over this element,
+    /// after the given delay.
+    /// The imperative API equivalent to [`StatefulInteractiveElement::tooltip_with_delay`].
+    pub fn tooltip_with_delay(
+        &mut self,
+        build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
+        show_delay: Duration,
+    ) where
+        Self: Sized,
+    {
+        self.tooltip_with_placement_and_delay(TooltipPlacement::Cursor, build_tooltip, show_delay);
     }
 
     /// Use the given callback to construct a new tooltip view when the mouse hovers over this element,
@@ -645,6 +654,20 @@ impl Interactivity {
     ) where
         Self: Sized,
     {
+        self.tooltip_with_placement_and_delay(placement, build_tooltip, TOOLTIP_SHOW_DELAY);
+    }
+
+    /// Use the given callback to construct a new tooltip view when the mouse hovers over this element,
+    /// positioning it according to the given placement after the given delay.
+    /// The imperative API equivalent to [`StatefulInteractiveElement::tooltip_with_placement_and_delay`].
+    pub fn tooltip_with_placement_and_delay(
+        &mut self,
+        placement: TooltipPlacement,
+        build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
+        show_delay: Duration,
+    ) where
+        Self: Sized,
+    {
         debug_assert!(
             self.tooltip_builder.is_none(),
             "calling tooltip more than once on the same element is not supported"
@@ -653,6 +676,7 @@ impl Interactivity {
             build: Rc::new(build_tooltip),
             hoverable: false,
             placement,
+            show_delay,
         });
     }
 
@@ -673,6 +697,7 @@ impl Interactivity {
             build: Rc::new(build_tooltip),
             hoverable: true,
             placement: TooltipPlacement::Cursor,
+            show_delay: TOOLTIP_SHOW_DELAY,
         });
     }
 
@@ -1364,6 +1389,22 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     }
 
     /// Use the given callback to construct a new tooltip view when the mouse hovers over this element,
+    /// after the given delay.
+    /// The fluent API equivalent to [`Interactivity::tooltip_with_delay`].
+    fn tooltip_with_delay(
+        mut self,
+        build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
+        show_delay: Duration,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity()
+            .tooltip_with_delay(build_tooltip, show_delay);
+        self
+    }
+
+    /// Use the given callback to construct a new tooltip view when the mouse hovers over this element,
     /// positioning it according to the given placement.
     /// The fluent API equivalent to [`Interactivity::tooltip_with_placement`].
     fn tooltip_with_placement(
@@ -1376,6 +1417,23 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     {
         self.interactivity()
             .tooltip_with_placement(placement, build_tooltip);
+        self
+    }
+
+    /// Use the given callback to construct a new tooltip view when the mouse hovers over this element,
+    /// positioning it according to the given placement after the given delay.
+    /// The fluent API equivalent to [`Interactivity::tooltip_with_placement_and_delay`].
+    fn tooltip_with_placement_and_delay(
+        mut self,
+        placement: TooltipPlacement,
+        build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
+        show_delay: Duration,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity()
+            .tooltip_with_placement_and_delay(placement, build_tooltip, show_delay);
         self
     }
 
@@ -1423,6 +1481,7 @@ pub(crate) struct TooltipBuilder {
     build: Rc<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>,
     hoverable: bool,
     placement: TooltipPlacement,
+    show_delay: Duration,
 }
 
 pub(crate) type KeyDownListener =
@@ -2622,6 +2681,7 @@ impl Interactivity {
 
                 let tooltip_is_hoverable = tooltip_builder.hoverable;
                 let tooltip_placement = tooltip_builder.placement;
+                let tooltip_show_delay = tooltip_builder.show_delay;
                 let source_bounds = hitbox.bounds;
                 let build_tooltip = Rc::new(move |window: &mut Window, cx: &mut App| {
                     Some((
@@ -2653,6 +2713,7 @@ impl Interactivity {
                     build_tooltip,
                     check_is_hovered,
                     check_is_hovered_during_prepaint,
+                    tooltip_show_delay,
                     window,
                 );
             }
@@ -3048,6 +3109,7 @@ pub(crate) fn register_tooltip_mouse_handlers(
     >,
     check_is_hovered: Rc<dyn Fn(&Window) -> bool>,
     check_is_hovered_during_prepaint: Rc<dyn Fn(&Window) -> bool>,
+    show_delay: Duration,
     window: &mut Window,
 ) {
     window.on_mouse_event({
@@ -3060,6 +3122,7 @@ pub(crate) fn register_tooltip_mouse_handlers(
                 &build_tooltip,
                 &check_is_hovered,
                 &check_is_hovered_during_prepaint,
+                show_delay,
                 phase,
                 window,
                 cx,
@@ -3107,6 +3170,7 @@ fn handle_tooltip_mouse_move(
     >,
     check_is_hovered: &Rc<dyn Fn(&Window) -> bool>,
     check_is_hovered_during_prepaint: &Rc<dyn Fn(&Window) -> bool>,
+    show_delay: Duration,
     phase: DispatchPhase,
     window: &mut Window,
     cx: &mut App,
@@ -3149,38 +3213,32 @@ fn handle_tooltip_mouse_move(
             active_tooltip.borrow_mut().take();
         }
         Action::ScheduleShow => {
+            if show_delay.is_zero() {
+                let new_tooltip = build_active_tooltip(
+                    active_tooltip,
+                    build_tooltip,
+                    check_is_hovered_during_prepaint,
+                    window,
+                    cx,
+                );
+                *active_tooltip.borrow_mut() = new_tooltip;
+                window.refresh();
+                return;
+            }
+
             let delayed_show_task = window.spawn(cx, {
                 let active_tooltip = active_tooltip.clone();
                 let build_tooltip = build_tooltip.clone();
                 let check_is_hovered_during_prepaint = check_is_hovered_during_prepaint.clone();
                 async move |cx| {
-                    cx.background_executor().timer(TOOLTIP_SHOW_DELAY).await;
+                    cx.background_executor().timer(show_delay).await;
                     cx.update(|window, cx| {
-                        let new_tooltip = build_tooltip(window, cx).map(
-                            |(view, tooltip_is_hoverable, placement, anchor_bounds)| {
-                                let active_tooltip = active_tooltip.clone();
-                                ActiveTooltip::Visible {
-                                    tooltip: AnyTooltip {
-                                        view,
-                                        mouse_position: window.mouse_position(),
-                                        placement,
-                                        anchor_bounds,
-                                        check_visible_and_update: Rc::new(
-                                            move |tooltip_bounds, window, cx| {
-                                                handle_tooltip_check_visible_and_update(
-                                                    &active_tooltip,
-                                                    tooltip_is_hoverable,
-                                                    &check_is_hovered_during_prepaint,
-                                                    tooltip_bounds,
-                                                    window,
-                                                    cx,
-                                                )
-                                            },
-                                        ),
-                                    },
-                                    is_hoverable: tooltip_is_hoverable,
-                                }
-                            },
+                        let new_tooltip = build_active_tooltip(
+                            &active_tooltip,
+                            &build_tooltip,
+                            &check_is_hovered_during_prepaint,
+                            window,
+                            cx,
                         );
                         *active_tooltip.borrow_mut() = new_tooltip;
                         window.refresh();
@@ -3195,6 +3253,43 @@ fn handle_tooltip_mouse_move(
                 });
         }
     }
+}
+
+fn build_active_tooltip(
+    active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
+    build_tooltip: &Rc<
+        dyn Fn(
+            &mut Window,
+            &mut App,
+        ) -> Option<(AnyView, bool, TooltipPlacement, Option<Bounds<Pixels>>)>,
+    >,
+    check_is_hovered_during_prepaint: &Rc<dyn Fn(&Window) -> bool>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<ActiveTooltip> {
+    build_tooltip(window, cx).map(|(view, tooltip_is_hoverable, placement, anchor_bounds)| {
+        let active_tooltip = active_tooltip.clone();
+        let check_is_hovered_during_prepaint = check_is_hovered_during_prepaint.clone();
+        ActiveTooltip::Visible {
+            tooltip: AnyTooltip {
+                view,
+                mouse_position: window.mouse_position(),
+                placement,
+                anchor_bounds,
+                check_visible_and_update: Rc::new(move |tooltip_bounds, window, cx| {
+                    handle_tooltip_check_visible_and_update(
+                        &active_tooltip,
+                        tooltip_is_hoverable,
+                        &check_is_hovered_during_prepaint,
+                        tooltip_bounds,
+                        window,
+                        cx,
+                    )
+                }),
+            },
+            is_hoverable: tooltip_is_hoverable,
+        }
+    })
 }
 
 /// Returns a callback which will be called by window prepaint to update tooltip visibility. The
