@@ -187,7 +187,7 @@ web-sys = { version = "0.3", features = [
     "WheelEvent",
     "Window",
 ] }
-wgpu = { git = "https://github.com/zed-industries/wgpu.git", branch = "v29" }
+wgpu = { git = "https://github.com/acoiro/wgpu.git", rev = "ce448e8f8d754966f0ce3be79af14bd66cb67d5b" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"
@@ -217,7 +217,7 @@ oo7 = { version = "0.6", default-features = false, features = [
     "async-std",
     "native_crypto",
 ] }
-wgpu = { git = "https://github.com/zed-industries/wgpu.git", branch = "v29" }
+wgpu = { git = "https://github.com/acoiro/wgpu.git", rev = "ce448e8f8d754966f0ce3be79af14bd66cb67d5b" }
 cosmic-text = "0.17.0"
 swash = "0.2.6"
 bytemuck = "1"

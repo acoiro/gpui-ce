@@ -81,6 +81,7 @@ pub enum WgpuOutputColorSpace {
     #[default]
     Srgb,
     DisplayP3,
+    ExtendedSrgbLinear,
 }
 
 impl WgpuOutputColorSpace {
@@ -88,8 +89,97 @@ impl WgpuOutputColorSpace {
         match self {
             Self::Srgb => 0,
             Self::DisplayP3 => 1,
+            Self::ExtendedSrgbLinear => 2,
         }
     }
+
+    fn surface_color_space(self) -> wgpu::SurfaceColorSpace {
+        match self {
+            Self::Srgb => wgpu::SurfaceColorSpace::Srgb,
+            Self::DisplayP3 => wgpu::SurfaceColorSpace::DisplayP3,
+            Self::ExtendedSrgbLinear => wgpu::SurfaceColorSpace::ExtendedSrgbLinear,
+        }
+    }
+
+    fn from_surface_color_space(color_space: wgpu::SurfaceColorSpace) -> Self {
+        match color_space {
+            wgpu::SurfaceColorSpace::Srgb => Self::Srgb,
+            wgpu::SurfaceColorSpace::DisplayP3 => Self::DisplayP3,
+            wgpu::SurfaceColorSpace::ExtendedSrgbLinear => Self::ExtendedSrgbLinear,
+        }
+    }
+
+    fn fallback_order(self) -> &'static [Self] {
+        match self {
+            Self::Srgb => &[Self::Srgb],
+            Self::DisplayP3 => &[Self::DisplayP3, Self::ExtendedSrgbLinear, Self::Srgb],
+            Self::ExtendedSrgbLinear => &[Self::ExtendedSrgbLinear, Self::DisplayP3, Self::Srgb],
+        }
+    }
+}
+
+const SDR_SURFACE_FORMATS: &[wgpu::TextureFormat] = &[
+    wgpu::TextureFormat::Bgra8Unorm,
+    wgpu::TextureFormat::Rgba8Unorm,
+    wgpu::TextureFormat::Bgra8UnormSrgb,
+    wgpu::TextureFormat::Rgba8UnormSrgb,
+];
+
+const EXTENDED_LINEAR_SURFACE_FORMATS: &[wgpu::TextureFormat] = &[wgpu::TextureFormat::Rgba16Float];
+
+fn preferred_surface_formats(
+    color_space: wgpu::SurfaceColorSpace,
+) -> &'static [wgpu::TextureFormat] {
+    match color_space {
+        wgpu::SurfaceColorSpace::Srgb | wgpu::SurfaceColorSpace::DisplayP3 => SDR_SURFACE_FORMATS,
+        wgpu::SurfaceColorSpace::ExtendedSrgbLinear => EXTENDED_LINEAR_SURFACE_FORMATS,
+    }
+}
+
+fn supported_surface_format_pairs(
+    surface_caps: &wgpu::SurfaceCapabilities,
+) -> Vec<wgpu::SurfaceFormat> {
+    if !surface_caps.format_color_spaces.is_empty() {
+        return surface_caps.format_color_spaces.clone();
+    }
+
+    surface_caps
+        .formats
+        .iter()
+        .copied()
+        .map(|format| wgpu::SurfaceFormat {
+            format,
+            color_space: wgpu::SurfaceColorSpace::Srgb,
+        })
+        .collect()
+}
+
+fn choose_surface_format_and_color_space(
+    surface_caps: &wgpu::SurfaceCapabilities,
+    requested: WgpuOutputColorSpace,
+) -> Option<(wgpu::TextureFormat, wgpu::SurfaceColorSpace)> {
+    let supported_pairs = supported_surface_format_pairs(surface_caps);
+
+    for output_color_space in requested.fallback_order() {
+        let color_space = output_color_space.surface_color_space();
+        for preferred_format in preferred_surface_formats(color_space) {
+            if supported_pairs.iter().any(|surface_format| {
+                surface_format.format == *preferred_format
+                    && surface_format.color_space == color_space
+            }) {
+                return Some((*preferred_format, color_space));
+            }
+        }
+
+        if let Some(surface_format) = supported_pairs
+            .iter()
+            .find(|surface_format| surface_format.color_space == color_space)
+        {
+            return Some((surface_format.format, surface_format.color_space));
+        }
+    }
+
+    None
 }
 
 #[cfg(target_family = "wasm")]
@@ -97,7 +187,7 @@ fn configure_web_canvas_output_color_space(
     canvas: &web_sys::HtmlCanvasElement,
     requested: WgpuOutputColorSpace,
 ) -> WgpuOutputColorSpace {
-    if requested != WgpuOutputColorSpace::DisplayP3 {
+    if requested == WgpuOutputColorSpace::Srgb {
         return WgpuOutputColorSpace::Srgb;
     }
 
@@ -341,22 +431,30 @@ impl WgpuRenderer {
         atlas: Arc<WgpuAtlas>,
     ) -> anyhow::Result<Self> {
         let surface_caps = surface.get_capabilities(&context.adapter);
-        let preferred_formats = [
-            wgpu::TextureFormat::Bgra8Unorm,
-            wgpu::TextureFormat::Rgba8Unorm,
-        ];
-        let surface_format = preferred_formats
-            .iter()
-            .find(|f| surface_caps.formats.contains(f))
-            .copied()
-            .or_else(|| surface_caps.formats.iter().find(|f| !f.is_srgb()).copied())
-            .or_else(|| surface_caps.formats.first().copied())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Surface reports no supported texture formats for adapter {:?}",
-                    context.adapter.get_info().name
-                )
-            })?;
+        let (surface_format, surface_color_space) =
+            choose_surface_format_and_color_space(&surface_caps, config.output_color_space)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Surface reports no supported format/color-space pairs for adapter {:?}",
+                        context.adapter.get_info().name
+                    )
+                })?;
+        let output_color_space =
+            WgpuOutputColorSpace::from_surface_color_space(surface_color_space);
+        if output_color_space != config.output_color_space {
+            warn!(
+                "Requested {:?} output color space is not available for adapter {:?}; using {:?}",
+                config.output_color_space,
+                context.adapter.get_info().name,
+                output_color_space
+            );
+        }
+        if !surface_caps.formats.contains(&surface_format) {
+            return Err(anyhow::anyhow!(
+                "Surface reports no supported texture formats for adapter {:?}",
+                context.adapter.get_info().name
+            ));
+        }
 
         let pick_alpha_mode =
             |preferences: &[wgpu::CompositeAlphaMode]| -> anyhow::Result<wgpu::CompositeAlphaMode> {
@@ -414,6 +512,7 @@ impl WgpuRenderer {
             width: clamped_width.max(1),
             height: clamped_height.max(1),
             present_mode: wgpu::PresentMode::Fifo,
+            color_space: surface_color_space,
             desired_maximum_frame_latency: 2,
             alpha_mode,
             view_formats: vec![],
@@ -558,7 +657,7 @@ impl WgpuRenderer {
             adapter_info,
             transparent_alpha_mode,
             opaque_alpha_mode,
-            output_color_space: requested_output_color_space,
+            output_color_space,
             requested_output_color_space,
             #[cfg(target_family = "wasm")]
             web_canvas: None,
@@ -580,7 +679,8 @@ impl WgpuRenderer {
 
     #[cfg(not(target_family = "wasm"))]
     fn apply_web_canvas_output_color_space(&mut self) {
-        self.output_color_space = self.requested_output_color_space;
+        self.output_color_space =
+            WgpuOutputColorSpace::from_surface_color_space(self.surface_config.color_space);
     }
 
     #[cfg(target_family = "wasm")]

@@ -710,7 +710,7 @@ impl X11WindowState {
                     // If the window appearance changes, then the renderer will get updated
                     // too
                     transparent: false,
-                    output_color_space: WgpuOutputColorSpace::Srgb,
+                    output_color_space: WgpuOutputColorSpace::DisplayP3,
                 };
                 WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
             };

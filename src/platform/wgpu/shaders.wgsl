@@ -238,14 +238,19 @@ fn srgba_to_linear(color: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(srgb_to_linear(color.rgb), color.a);
 }
 
-fn display_p3_to_linear_srgb(color: vec4<f32>) -> vec4<f32> {
+fn display_p3_to_linear_srgb_unclamped(color: vec4<f32>) -> vec4<f32> {
     let linear_p3 = srgb_to_linear(color.rgb);
     let linear_srgb = vec3<f32>(
         1.2247450 * linear_p3.r - 0.2249046 * linear_p3.g + 0.0000000 * linear_p3.b,
         -0.0420578 * linear_p3.r + 1.0420811 * linear_p3.g - 0.0000000 * linear_p3.b,
         -0.0196423 * linear_p3.r - 0.0786549 * linear_p3.g + 1.0985372 * linear_p3.b,
     );
-    return vec4<f32>(clamp(linear_srgb, vec3<f32>(0.0), vec3<f32>(1.0)), color.a);
+    return vec4<f32>(linear_srgb, color.a);
+}
+
+fn display_p3_to_linear_srgb(color: vec4<f32>) -> vec4<f32> {
+    let linear_srgb = display_p3_to_linear_srgb_unclamped(color);
+    return vec4<f32>(clamp(linear_srgb.rgb, vec3<f32>(0.0), vec3<f32>(1.0)), color.a);
 }
 
 fn srgb_to_display_p3(color: vec4<f32>) -> vec4<f32> {
@@ -261,6 +266,8 @@ fn srgb_to_display_p3(color: vec4<f32>) -> vec4<f32> {
 fn srgb_to_output_color(color: vec4<f32>) -> vec4<f32> {
     if (globals.output_color_space == 1u) {
         return srgb_to_display_p3(color);
+    } else if (globals.output_color_space == 2u) {
+        return vec4<f32>(srgb_to_linear(color.rgb), color.a);
     }
     return color;
 }
@@ -268,6 +275,8 @@ fn srgb_to_output_color(color: vec4<f32>) -> vec4<f32> {
 fn display_p3_to_output_color(color: vec4<f32>) -> vec4<f32> {
     if (globals.output_color_space == 1u) {
         return color;
+    } else if (globals.output_color_space == 2u) {
+        return display_p3_to_linear_srgb_unclamped(color);
     }
     return display_p3_to_linear_srgb(color);
 }
@@ -275,6 +284,8 @@ fn display_p3_to_output_color(color: vec4<f32>) -> vec4<f32> {
 fn linear_srgb_to_output_color(color: vec4<f32>) -> vec4<f32> {
     if (globals.output_color_space == 1u) {
         return srgb_to_display_p3(linear_to_srgba(color));
+    } else if (globals.output_color_space == 2u) {
+        return color;
     }
     return color;
 }
