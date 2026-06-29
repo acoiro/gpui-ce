@@ -86,7 +86,6 @@ futures = "0.3"
 futures-concurrency = "7"
 gpui-ce-macros = { path = "./tooling/macros", features = ["inspector"] }
 http_client = { package = "gpui_http_client", path = "crates/gpui_http_client" }
-image = "0.25.1"
 inventory = "0.3.19"
 itertools = "0.14.0"
 libc = "0.2"
@@ -132,6 +131,7 @@ pollster = "0.4"
 chrono = "0.4"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
+image = "0.25.1"
 smol = "2.0"
 
 [target.'cfg(target_family = "wasm")'.dependencies]
@@ -146,6 +146,12 @@ swash = "0.2.6"
 uuid = { version = "1.1.2", features = ["js", "v4"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
+image = { version = "0.25.1", default-features = false, features = [
+    "gif",
+    "jpeg",
+    "png",
+    "webp",
+] }
 web-sys = { version = "0.3", features = [
     "Blob",
     "BlobPropertyBag",
@@ -187,7 +193,10 @@ web-sys = { version = "0.3", features = [
     "WheelEvent",
     "Window",
 ] }
-wgpu = { git = "https://github.com/acoiro/wgpu.git", rev = "ce448e8f8d754966f0ce3be79af14bd66cb67d5b" }
+wgpu = { git = "https://github.com/acoiro/wgpu.git", rev = "ce448e8f8d754966f0ce3be79af14bd66cb67d5b", default-features = false, features = [
+    "webgpu",
+    "wgsl",
+] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"
