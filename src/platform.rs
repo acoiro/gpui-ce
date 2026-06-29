@@ -135,7 +135,16 @@ pub fn background_executor() -> crate::BackgroundExecutor {
 
 /// Creates a new application with the current platform.
 pub fn application() -> crate::Application {
-    crate::Application::with_platform(current_platform(false))
+    #[cfg(target_family = "wasm")]
+    {
+        crate::Application::with_platform(current_platform(false))
+            .with_http_client(Arc::new(web::FetchHttpClient::new()))
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    {
+        crate::Application::with_platform(current_platform(false))
+    }
 }
 
 /// Creates a new headless application.
@@ -147,6 +156,7 @@ pub fn headless() -> crate::Application {
 #[cfg(target_family = "wasm")]
 pub fn single_threaded_web() -> crate::Application {
     crate::Application::with_platform(Rc::new(web::WebPlatform::new(false)))
+        .with_http_client(Arc::new(web::FetchHttpClient::new()))
 }
 
 /// Initializes panic hooks and logging for the web platform.
