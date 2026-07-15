@@ -351,8 +351,6 @@ impl WebWindowInner {
                 return;
             }
 
-            event.prevent_default();
-
             let is_held = event.repeat();
             let key_char = compute_key_char(&event, &key, &modifiers);
 
@@ -368,17 +366,23 @@ impl WebWindowInner {
                 prefer_character_input: false,
             }));
 
-            if let Some(result) = result {
-                if !result.propagate {
-                    return;
-                }
+            let is_composing = this.is_composing.get() || event.is_composing();
+            let manually_handles_text =
+                !is_composing && modifiers.is_subset_of(&Modifiers::shift()) && key_char.is_some();
+
+            if should_prevent_dom_default(result.as_ref(), is_composing, manually_handles_text) {
+                event.prevent_default();
             }
 
-            if this.is_composing.get() || event.is_composing() {
+            if result.is_some_and(|result| !result.propagate) {
                 return;
             }
 
-            if modifiers.is_subset_of(&Modifiers::shift()) {
+            if is_composing {
+                return;
+            }
+
+            if manually_handles_text {
                 if let Some(text) = key_char {
                     this.with_input_handler(|handler| {
                         handler.replace_text_in_range(None, &text);
@@ -413,8 +417,6 @@ impl WebWindowInner {
                 return;
             }
 
-            event.prevent_default();
-
             let key_char = compute_key_char(&event, &key, &modifiers);
 
             let keystroke = Keystroke {
@@ -423,7 +425,12 @@ impl WebWindowInner {
                 key_char,
             };
 
-            this.dispatch_input(PlatformInput::KeyUp(KeyUpEvent { keystroke }));
+            let result = this.dispatch_input(PlatformInput::KeyUp(KeyUpEvent { keystroke }));
+            let is_composing = this.is_composing.get() || event.is_composing();
+
+            if should_prevent_dom_default(result.as_ref(), is_composing, false) {
+                event.prevent_default();
+            }
         })
     }
 
@@ -650,6 +657,16 @@ fn compute_key_char(
     }
 
     None
+}
+
+fn should_prevent_dom_default(
+    result: Option<&DispatchEventResult>,
+    is_composing: bool,
+    manually_handles_text: bool,
+) -> bool {
+    is_composing
+        || manually_handles_text
+        || result.is_some_and(|result| !result.propagate || result.default_prevented)
 }
 
 fn pointer_position_in_element(event: &web_sys::PointerEvent) -> Point<Pixels> {

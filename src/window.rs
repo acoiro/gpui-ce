@@ -1471,10 +1471,12 @@ impl Window {
     }
 }
 
+/// Describes how GPUI handled a dispatched platform input event.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[expect(missing_docs)]
 pub struct DispatchEventResult {
+    /// Whether the event was left available for additional handlers.
     pub propagate: bool,
+    /// Whether the platform's default action should be suppressed.
     pub default_prevented: bool,
 }
 
@@ -2135,8 +2137,8 @@ impl Window {
         self.text_style().line_height_in_pixels(self.rem_size())
     }
 
-    /// Call to prevent the default action of an event. Currently only used to prevent
-    /// parent elements from becoming focused on mouse down.
+    /// Call to prevent the default action of an event. Platform backends may use this signal to
+    /// suppress their native default behavior, including browser DOM defaults on the web.
     pub fn prevent_default(&mut self) {
         self.default_prevented = true;
     }
