@@ -55,6 +55,8 @@ impl WebWindowInner {
         let mut closures = vec![
             self.register_pointer_down(),
             self.register_pointer_up(),
+            self.register_pointer_cancel(),
+            self.register_lost_pointer_capture(),
             self.register_pointer_move(),
             self.register_pointer_leave(),
             self.register_wheel(),
@@ -129,11 +131,44 @@ impl WebWindowInner {
         borrowed.input.as_mut().map(|callback| callback(input))
     }
 
+    fn dispatch_mouse_up(
+        &self,
+        button: MouseButton,
+        position: Point<Pixels>,
+        modifiers: Modifiers,
+    ) {
+        {
+            let mut current_state = self.state.borrow_mut();
+            current_state.mouse_position = position;
+            current_state.modifiers = modifiers;
+        }
+
+        self.dispatch_input(PlatformInput::MouseUp(MouseUpEvent {
+            button,
+            position,
+            modifiers,
+            click_count: self.click_state.borrow().current_count,
+        }));
+    }
+
+    pub(super) fn release_pressed_button(
+        &self,
+        position: Point<Pixels>,
+        modifiers: Modifiers,
+    ) -> bool {
+        let Some(button) = self.pressed_button.take() else {
+            return false;
+        };
+        self.dispatch_mouse_up(button, position, modifiers);
+        true
+    }
+
     fn register_pointer_down(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
         let this = Rc::clone(self);
         self.listen("pointerdown", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
             event.prevent_default();
+            this.canvas.set_pointer_capture(event.pointer_id()).ok();
             this.input_element.focus().ok();
 
             let button = dom_mouse_button_to_gpui(event.button());
@@ -171,20 +206,27 @@ impl WebWindowInner {
             let modifiers = modifiers_from_mouse_event(&event, this.is_mac);
 
             this.pressed_button.set(None);
-            let click_count = this.click_state.borrow().current_count;
+            this.dispatch_mouse_up(button, position, modifiers);
+        })
+    }
 
-            {
-                let mut current_state = this.state.borrow_mut();
-                current_state.mouse_position = position;
-                current_state.modifiers = modifiers;
-            }
+    fn register_pointer_cancel(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+        let this = Rc::clone(self);
+        self.listen("pointercancel", move |event: JsValue| {
+            let event: web_sys::PointerEvent = event.unchecked_into();
+            let position = pointer_position_in_element(&event);
+            let modifiers = modifiers_from_mouse_event(&event, this.is_mac);
+            this.release_pressed_button(position, modifiers);
+        })
+    }
 
-            this.dispatch_input(PlatformInput::MouseUp(MouseUpEvent {
-                button,
-                position,
-                modifiers,
-                click_count,
-            }));
+    fn register_lost_pointer_capture(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+        let this = Rc::clone(self);
+        self.listen("lostpointercapture", move |event: JsValue| {
+            let event: web_sys::PointerEvent = event.unchecked_into();
+            let position = pointer_position_in_element(&event);
+            let modifiers = modifiers_from_mouse_event(&event, this.is_mac);
+            this.release_pressed_button(position, modifiers);
         })
     }
 
@@ -196,6 +238,14 @@ impl WebWindowInner {
 
             let position = pointer_position_in_element(&event);
             let modifiers = modifiers_from_mouse_event(&event, this.is_mac);
+
+            if this
+                .pressed_button
+                .get()
+                .is_some_and(|button| !dom_buttons_contains(event.buttons(), button))
+            {
+                this.release_pressed_button(position, modifiers);
+            }
             let current_pressed = this.pressed_button.get();
 
             {
@@ -484,10 +534,12 @@ impl WebWindowInner {
     fn register_blur(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
         let this = Rc::clone(self);
         self.listen_input("blur", move |_event: JsValue| {
-            {
+            let (position, modifiers) = {
                 let mut state = this.state.borrow_mut();
                 state.is_active = false;
-            }
+                (state.mouse_position, state.modifiers)
+            };
+            this.release_pressed_button(position, modifiers);
             let mut callbacks = this.callbacks.borrow_mut();
             if let Some(ref mut callback) = callbacks.active_status_change {
                 callback(false);
@@ -569,6 +621,17 @@ fn dom_mouse_button_to_gpui(button: i16) -> MouseButton {
         4 => MouseButton::Navigate(NavigationDirection::Forward),
         _ => MouseButton::Left,
     }
+}
+
+fn dom_buttons_contains(buttons: u16, button: MouseButton) -> bool {
+    let button_mask = match button {
+        MouseButton::Left => 1,
+        MouseButton::Right => 2,
+        MouseButton::Middle => 4,
+        MouseButton::Navigate(NavigationDirection::Back) => 8,
+        MouseButton::Navigate(NavigationDirection::Forward) => 16,
+    };
+    buttons & button_mask != 0
 }
 
 fn modifiers_from_keyboard_event(event: &web_sys::KeyboardEvent, _is_mac: bool) -> Modifiers {

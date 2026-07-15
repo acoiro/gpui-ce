@@ -391,9 +391,13 @@ impl WebWindowInner {
                 })
                 .unwrap_or(true);
 
-            {
+            let (position, modifiers) = {
                 let mut state = this.state.borrow_mut();
                 state.is_active = is_visible;
+                (state.mouse_position, state.modifiers)
+            };
+            if !is_visible {
+                this.release_pressed_button(position, modifiers);
             }
             let mut callbacks = this.callbacks.borrow_mut();
             if let Some(ref mut callback) = callbacks.active_status_change {
